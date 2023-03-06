@@ -195,7 +195,7 @@ class InflectionDataModule(Seq2SeqDataModule):
 
         tags = [list(re.sub(r"[;,()]", " ", tag).split()) for tag in tags]
         sources = [tag + dekanjify(list(source)) for tag, source in zip(tags, lemmas)]
-        targets = [list(target) for target in forms]
+        targets = [dekanjify(list(target)) for target in forms]
 
         source_target_pairs = list(zip(sources, targets))
 

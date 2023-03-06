@@ -334,6 +334,7 @@ class InterpretableTransducer(LightningModule):
         alignments = [torch.zeros((batch_size, source_timesteps), device=self.device, dtype=torch.long)]
         decoder_states = [torch.full((batch_size,), fill_value=-1, device=self.device, dtype=torch.long)]
         decoder_hidden = bridge_output
+        finished = torch.zeros(len(predictions), dtype=torch.bool)
 
         for t in range(self.max_decoding_length):
             last_prediction = predictions[-1]
@@ -371,6 +372,10 @@ class InterpretableTransducer(LightningModule):
                 decoder_states_t = decoder_states_t.reshape(batch_size, self.num_decoder_states)
                 decoder_states_t = torch.argmax(decoder_states_t, dim=-1).long()
                 decoder_states.append(decoder_states_t)
+
+            finished = torch.logical_or(finished, torch.eq(prediction.cpu(), eos_index))
+            if torch.all(finished):
+                break
 
         predictions = torch.cat(predictions, dim=1).detach().cpu().tolist()
         alignments = torch.stack(alignments).permute([1, 2, 0]).detach().cpu().long()

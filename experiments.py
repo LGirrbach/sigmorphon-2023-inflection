@@ -1,6 +1,7 @@
 import os
 import json
 import torch
+import logging
 
 from tqdm.auto import tqdm
 from typing import Optional
@@ -73,7 +74,7 @@ def get_data_modules():
 def experiment(name: str, dm: Seq2SeqDataModule, binary_attention: bool, num_symbol_features: int,
                num_source_features: int):
     base_path = os.path.join("./results/", name)
-    check_val_every_n_epoch = 3 if name.startswith("g2p") else 1
+    check_val_every_n_epoch = 1
 
     logger = pl_loggers.CSVLogger(save_dir=os.path.join(base_path, "logs"))
     early_stopping_callback = EarlyStopping(monitor="val_edit_distance", patience=3, mode="min", verbose=False)
@@ -98,8 +99,8 @@ def experiment(name: str, dm: Seq2SeqDataModule, binary_attention: bool, num_sym
     )
 
     trainer = Trainer(
-        max_epochs=500, log_every_n_steps=10, check_val_every_n_epoch=check_val_every_n_epoch, accelerator="gpu",
-        gradient_clip_val=1.0, enable_progress_bar=False, gpus=1, logger=logger, enable_model_summary=False,
+        max_epochs=500, log_every_n_steps=10, check_val_every_n_epoch=check_val_every_n_epoch, accelerator='gpu',
+        devices=1, gradient_clip_val=1.0, enable_progress_bar=False, logger=logger, enable_model_summary=False,
         callbacks=[early_stopping_callback, checkpoint_callback],
     )
 
@@ -148,7 +149,11 @@ def experiment(name: str, dm: Seq2SeqDataModule, binary_attention: bool, num_sym
 
 
 if __name__ == '__main__':
+    # Global Settings
     torch.set_float32_matmul_precision('medium')
+    logging.disable(logging.WARNING)
+
+    # Progress Bar
     progress_bar = tqdm(desc="Progress", total=(len(os.listdir("./data/")) // 3))
     progress_bar.display()
 
