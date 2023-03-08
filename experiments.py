@@ -71,17 +71,18 @@ def get_data_modules():
         yield f"inflection-{lang_code}", data_module
 
 
-def experiment(name: str, dm: Seq2SeqDataModule, binary_attention: bool, num_symbol_features: int,
-               num_source_features: int):
+def experiment(name: str, dm: Seq2SeqDataModule, num_symbol_features: int, num_source_features: int):
     base_path = os.path.join("./results/", name)
     check_val_every_n_epoch = 1
 
     logger = pl_loggers.CSVLogger(save_dir=os.path.join(base_path, "logs"))
-    early_stopping_callback = EarlyStopping(monitor="val_edit_distance", patience=3, mode="min", verbose=False)
+    early_stopping_callback = EarlyStopping(
+        monitor="val_normalised_edit_distance", patience=3, mode="min", verbose=False
+    )
     checkpoint_callback = ModelCheckpoint(
         dirpath=os.path.join(base_path, "saved_models"),
-        filename=name + "-{val_edit_distance}",
-        monitor="val_edit_distance",
+        filename=name + "-{val_normalised_edit_distance}",
+        monitor="val_normalised_edit_distance",
         save_last=True,
         save_top_k=1,
         mode="min",
@@ -95,7 +96,7 @@ def experiment(name: str, dm: Seq2SeqDataModule, binary_attention: bool, num_sym
         source_alphabet_size=dm.source_alphabet_size, target_alphabet_size=dm.target_alphabet_size,
         num_layers=2, dropout=0.0, hidden_size=256, max_decoding_length=100,
         num_source_features=num_source_features, num_symbol_features=num_symbol_features, num_decoder_states=0,
-        enable_seq2seq_loss=True, binary_attention=binary_attention
+        enable_seq2seq_loss=True
     )
 
     trainer = Trainer(
@@ -158,18 +159,17 @@ if __name__ == '__main__':
     progress_bar.display()
 
     for task_name, task_data in get_data_modules():
-        for use_binary_attention in [True]:
-            for n_symbol_features, n_source_features in [(0, 0)]:
-                for trial in range(1, 2):
-                    experiment_name = f"{task_name}-binary_attention={use_binary_attention}"
-                    experiment_name += f"-num_symbol_features={n_symbol_features}"
-                    experiment_name += f"-num_source_features={n_source_features}"
-                    experiment_name += f"-trial={trial}"
+        for n_symbol_features, n_source_features in [(0, 0)]:
+            for trial in range(1, 2):
+                experiment_name = f"{task_name}"
+                experiment_name += f"-num_symbol_features={n_symbol_features}"
+                experiment_name += f"-num_source_features={n_source_features}"
+                experiment_name += f"-trial={trial}"
 
-                    experiment(
-                        name=experiment_name, dm=task_data, binary_attention=use_binary_attention,
-                        num_symbol_features=n_symbol_features, num_source_features=n_source_features
-                    )
-                    progress_bar.update(1)
+                experiment(
+                    name=experiment_name, dm=task_data,
+                    num_symbol_features=n_symbol_features, num_source_features=n_source_features
+                )
+                progress_bar.update(1)
 
     progress_bar.close()

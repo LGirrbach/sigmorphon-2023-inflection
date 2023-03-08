@@ -29,7 +29,7 @@ class InterpretableTransducer(LightningModule):
     def __init__(self, source_alphabet_size: int, target_alphabet_size: int, hidden_size: int = 128,
                  num_layers: int = 1, dropout: float = 0.0, embedding_size: int = 128, num_source_features: int = 0,
                  num_symbol_features: int = 0, num_decoder_states: int = 0, autoregressive_order: int = 0,
-                 max_decoding_length: int = 100, binary_attention: bool = True, enable_seq2seq_loss: bool = False):
+                 max_decoding_length: int = 100, enable_seq2seq_loss: bool = False):
         super().__init__()
 
         # Store Arguments
@@ -45,7 +45,6 @@ class InterpretableTransducer(LightningModule):
         self.num_decoder_states = num_decoder_states
         self.autoregressive_order = autoregressive_order
         self.max_decoding_length = max_decoding_length
-        self.binary_attention = binary_attention
         self.enable_seq2seq_loss = enable_seq2seq_loss
 
         self._check_arguments()
@@ -89,6 +88,12 @@ class InterpretableTransducer(LightningModule):
             input_size=self.embedding_size, hidden_size=self.hidden_size, num_layers=self.num_layers,
             dropout=self.dropout
         )
+
+        self.source_symbol_attention_linear = nn.Identity()
+        self.target_symbol_attention_linear = nn.Identity()
+        self.source_condition_attention_linear = nn.Identity()
+        self.target_condition_attention_linear = nn.Identity()
+
         if self.num_decoder_states > 0:
             self.decoder_state_classifier = nn.Sequential(
                 nn.Dropout(p=self.dropout),
@@ -98,7 +103,7 @@ class InterpretableTransducer(LightningModule):
             torch.nn.init.xavier_normal_(self.decoder_states)
 
         # Initialise Final Predictor
-        classifier_in_size = self.embedding_size
+        classifier_in_size = 2 * self.embedding_size
         classifier_in_size += (self.hidden_size if self.num_symbol_features > 0 else 0)
         classifier_in_size += (self.hidden_size if self.num_source_features > 0 else 0)
         classifier_in_size += (self.hidden_size if self.num_decoder_states > 0 else 0)
@@ -116,7 +121,7 @@ class InterpretableTransducer(LightningModule):
         if self.enable_seq2seq_loss:
             self.seq2seq_classifier = nn.Sequential(
                 nn.Dropout(p=self.dropout),
-                nn.Linear(2 * self.hidden_size, self.hidden_size),
+                nn.Linear(3 * self.hidden_size, self.hidden_size),
                 nn.GELU(),
                 nn.Dropout(p=self.dropout),
                 nn.Linear(self.hidden_size, self.target_alphabet_size)
@@ -151,7 +156,6 @@ class InterpretableTransducer(LightningModule):
         assert isinstance(self.num_decoder_states, int) and self.num_decoder_states >= 0
         assert isinstance(self.autoregressive_order, int) and self.autoregressive_order >= 0
         assert isinstance(self.max_decoding_length, int) and self.max_decoding_length > 0
-        assert isinstance(self.binary_attention, bool)
         assert isinstance(self.enable_seq2seq_loss, bool)
 
     def encode(self, source: Tensor, source_length: Tensor) -> EncoderOutput:
@@ -161,6 +165,43 @@ class InterpretableTransducer(LightningModule):
         source_encoded = self.encoder(source_embedded_with_dropout, source_length)
 
         return EncoderOutput(source_embeddings=source_embedded, source_encodings=source_encoded)
+
+    def decoder_attention(self, source_encoded: Tensor, target_encoded: Tensor, values: Tensor,
+                          attention_mask: Tensor, deterministic_discretize: bool) -> Tuple[Tensor, Tensor]:
+        symbol_attention_output = attention(
+            encoder_states=self.source_symbol_attention_linear(source_encoded),
+            decoder_states=self.target_symbol_attention_linear(target_encoded),
+            attention_mask=attention_mask,
+            values=values,
+            normalisation="softmax",
+            hard=True,
+            deterministic_discretize=deterministic_discretize
+        )
+
+        condition_attention_output = attention(
+            encoder_states=self.source_symbol_attention_linear(source_encoded),
+            decoder_states=self.target_symbol_attention_linear(target_encoded),
+            attention_mask=attention_mask,
+            values=values,
+            normalisation="sigmoid",
+            hard=True,
+            deterministic_discretize=deterministic_discretize
+        )
+
+        contexts = [
+            symbol_attention_output.contexts,
+            condition_attention_output.contexts
+            ]
+        contexts = torch.cat(contexts, dim=-1)
+
+        hard_attention_scores = [
+            symbol_attention_output.hard_attention_scores,
+            condition_attention_output.hard_attention_scores
+        ]
+        hard_attention_scores = torch.stack(hard_attention_scores)
+        hard_attention_scores = hard_attention_scores.transpose(0, 1)
+
+        return contexts, hard_attention_scores
 
     def decode(self, source_encoded: Tensor, source_embedded: Tensor, target: Tensor, target_length: Tensor,
                attention_mask: Tensor, decoder_hidden, deterministic_discretize: bool):
@@ -172,15 +213,16 @@ class InterpretableTransducer(LightningModule):
         new_decoder_hidden = decoder_output["new_hidden_state"]
 
         # Compute attention
-        encoder_attention_normalisation = "sigmoid" if self.binary_attention else "softmax"
-        encoder_attention_output = attention(
-            encoder_states=source_encoded, decoder_states=target_encoded, attention_mask=attention_mask,
-            values=source_embedded, normalisation=encoder_attention_normalisation, hard=True,
-            deterministic_discretize=deterministic_discretize
+        contexts, hard_attention_scores = self.decoder_attention(
+            source_encoded, target_encoded, source_embedded, attention_mask, deterministic_discretize
         )
-        contexts = encoder_attention_output.contexts
-        # contexts: shape [batch x timesteps decoder x embedding size]
-        source_selection = encoder_attention_output.hard_attention_scores
+
+        if self.enable_seq2seq_loss:
+            seq2seq_contexts, _ = self.decoder_attention(
+                source_encoded, target_encoded, source_encoded, attention_mask, deterministic_discretize
+            )
+        else:
+            seq2seq_contexts = None
 
         # Compute Decoder States (optional)
         if self.num_decoder_states > 0:
@@ -192,9 +234,14 @@ class InterpretableTransducer(LightningModule):
             hard_decoder_state_scores = None
 
         return DecoderOutput(
-            contexts=contexts, hidden_state=new_decoder_hidden, source_selection=source_selection,
-            decoder_outputs=target_encoded, decoder_states=decoder_state_features,
-            decoder_state_selection=hard_decoder_state_scores, target_embedded=target_embedded
+            contexts=contexts,
+            seq2seq_contexts=seq2seq_contexts,
+            hidden_state=new_decoder_hidden,
+            source_selection=hard_attention_scores,
+            decoder_outputs=target_encoded,
+            decoder_states=decoder_state_features,
+            decoder_state_selection=hard_decoder_state_scores,
+            target_embedded=target_embedded
         )
 
     def get_autoregressive_embeddings(self, target_embedded: Tensor) -> Tensor:
@@ -299,150 +346,6 @@ class InterpretableTransducer(LightningModule):
             source_mask=source_mask, target_mask=target_mask, attention_mask=attention_mask
         )
 
-    def greedy_decode(self, source: Tensor, source_length: Tensor):
-        # Define constants
-        batch_size = source.shape[0]
-        source_timesteps = source.shape[1]
-        sos_index = 2
-        eos_index = 3
-
-        # Make Masks
-        source_length = source_length.cpu()
-        target_lengths = torch.ones_like(source_length)
-        masks = self.get_masks(source_lengths=source_length, target_lengths=target_lengths)
-
-        # Embed and encode source
-        encoder_output = self.encode(source=source, source_length=source_length)
-        source_embeddings = encoder_output.source_embeddings
-        source_encodings = encoder_output.source_encodings
-
-        if self.num_symbol_features > 0:
-            symbol_features, hard_symbol_feature_scores = self.get_symbol_features(
-                source_encodings, deterministic=True
-            )
-            source_embeddings = torch.cat([source_embeddings, symbol_features], dim=-1)
-            hard_symbol_feature_scores = hard_symbol_feature_scores.detach().cpu().long()
-        else:
-            hard_symbol_feature_scores = None
-
-        # Apply Encoder -> Decoder Bridge (optional)
-        bridge_output, bridge_features, hard_bridge_features = self.compute_bridge(
-            source_encodings, masks.source_mask, deterministic=False
-        )
-
-        predictions = [torch.full((batch_size, 1), fill_value=sos_index, device=self.device, dtype=torch.long)]
-        alignments = [torch.zeros((batch_size, source_timesteps), device=self.device, dtype=torch.long)]
-        decoder_states = [torch.full((batch_size,), fill_value=-1, device=self.device, dtype=torch.long)]
-        decoder_hidden = bridge_output
-        finished = torch.zeros(len(predictions), dtype=torch.bool)
-
-        for t in range(self.max_decoding_length):
-            last_prediction = predictions[-1]
-
-            # Apply Decoder
-            decoder_output = self.decode(
-                source_encodings, source_embeddings, last_prediction, target_lengths,
-                attention_mask=masks.attention_mask, decoder_hidden=decoder_hidden, deterministic_discretize=True
-            )
-
-            if self.autoregressive_order > 0:
-                window_start = max(0, len(predictions) - self.autoregressive_order)
-                autoregressive_embeddings = torch.cat(predictions[window_start:], dim=1)
-                autoregressive_embeddings = self.target_embeddings(autoregressive_embeddings)
-                autoregressive_embeddings = self.get_autoregressive_embeddings(autoregressive_embeddings)
-                autoregressive_embeddings = autoregressive_embeddings[:, -1:, :]
-                contexts = torch.cat([decoder_output.contexts, autoregressive_embeddings], dim=2)
-            else:
-                contexts = decoder_output.contexts
-
-            # Get Prediction Scores
-            prediction_scores = self.get_prediction_scores(
-                source_contexts=contexts, source_features=bridge_features,
-                decoder_states=decoder_output.decoder_states
-            )
-
-            # Get Predictions
-            prediction = torch.argmax(prediction_scores, dim=-1)
-            predictions.append(prediction)
-            decoder_hidden = decoder_output.hidden_state
-
-            alignments.append(decoder_output.source_selection.reshape(batch_size, source_timesteps))
-            if self.num_decoder_states > 0:
-                decoder_states_t = decoder_output.decoder_state_selection.detach()
-                decoder_states_t = decoder_states_t.reshape(batch_size, self.num_decoder_states)
-                decoder_states_t = torch.argmax(decoder_states_t, dim=-1).long()
-                decoder_states.append(decoder_states_t)
-
-            finished = torch.logical_or(finished, torch.eq(prediction.cpu(), eos_index))
-            if torch.all(finished):
-                break
-
-        predictions = torch.cat(predictions, dim=1).detach().cpu().tolist()
-        alignments = torch.stack(alignments).permute([1, 2, 0]).detach().cpu().long()
-        source_length = source_length.detach().cpu().tolist()
-
-        if self.num_decoder_states > 0:
-            decoder_states = torch.stack(decoder_states).transpose(0, 1).detach().cpu().long()
-        else:
-            decoder_states = None
-
-        if hard_bridge_features is not None:
-            sequence_features = hard_bridge_features.detach().cpu().long().tolist()
-        else:
-            sequence_features = None
-
-        truncated_predictions = []
-        truncated_alignments = []
-        truncated_symbol_features = []
-        truncated_decoder_states = []
-
-        for k, (prediction, source_length_k) in enumerate(zip(predictions, source_length)):
-            if eos_index not in prediction:
-                prediction_length = len(prediction)
-            else:
-                prediction_length = prediction.index(eos_index) + 1
-
-            truncated_predictions.append(prediction[:prediction_length])
-            truncated_alignments.append(alignments[k, :source_length_k, :prediction_length].tolist())
-
-            if hard_symbol_feature_scores is not None:
-                truncated_symbol_features.append(hard_symbol_feature_scores[k, :source_length_k, :].tolist())
-
-            if decoder_states is not None:
-                decoder_states_k = decoder_states[k, :prediction_length].tolist()
-                truncated_decoder_states.append(decoder_states_k)
-
-        if not truncated_symbol_features:
-            truncated_symbol_features = None
-        if not truncated_decoder_states:
-            truncated_decoder_states = None
-
-        return InferenceOutput(
-            predictions=truncated_predictions, alignments=truncated_alignments, sequence_features=sequence_features,
-            symbol_features=truncated_symbol_features, decoder_states=truncated_decoder_states
-        )
-
-    def get_seq2seq_loss(self, source_encoded: Tensor, target_encoded: Tensor, attention_mask: Tensor,
-                         target: Tensor) -> Tensor:
-        encoder_attention_normalisation = "sigmoid" if self.binary_attention else "softmax"
-        encoder_attention_output = attention(
-            encoder_states=source_encoded, decoder_states=target_encoded, attention_mask=attention_mask,
-            values=source_encoded, normalisation=encoder_attention_normalisation, hard=False,
-            deterministic_discretize=True
-        )
-        contexts = encoder_attention_output.contexts
-
-        classifier_inputs = torch.cat([target_encoded, contexts], dim=-1)
-        prediction_scores = self.seq2seq_classifier(classifier_inputs)
-
-        # Compute Loss
-        prediction_scores = prediction_scores[:, :-1, :]
-        prediction_scores = prediction_scores.reshape(-1, self.target_alphabet_size)
-        labels = target[:, 1:].reshape(-1)
-
-        loss = self.cross_entropy(prediction_scores, labels)
-        return loss
-
     def training_step(self, batch, batch_idx):
         self.train()
         torch.set_grad_enabled(True)
@@ -488,28 +391,42 @@ class InterpretableTransducer(LightningModule):
         prediction_scores = self.get_prediction_scores(
             source_contexts=contexts, source_features=bridge_features, decoder_states=decoder_output.decoder_states
         )
-
-        # Compute Loss
         prediction_scores = prediction_scores[:, :-1, :]
         prediction_scores = prediction_scores.reshape(-1, self.target_alphabet_size)
+
+        # Get Seq2Seq Prediction Scores (optional)
+        if self.enable_seq2seq_loss:
+            seq2seq_prediction_scores = self.seq2seq_classifier(
+                torch.cat([decoder_output.decoder_outputs, decoder_output.seq2seq_contexts], dim=-1)
+            )
+            seq2seq_prediction_scores = seq2seq_prediction_scores[:, :-1, :]
+            seq2seq_prediction_scores = seq2seq_prediction_scores.reshape(-1, self.target_alphabet_size)
+        else:
+            seq2seq_prediction_scores = None
+
+        # Compute Loss
         labels = target[:, 1:].reshape(-1)
 
         loss = self.cross_entropy(prediction_scores, labels)
 
         if self.enable_seq2seq_loss:
-            seq2seq_loss = self.get_seq2seq_loss(
-                source_encodings, decoder_output.decoder_outputs, masks.attention_mask, target
-            )
-            loss = loss + seq2seq_loss - seq2seq_loss.detach()
+            seq2seq_loss = self.cross_entropy(seq2seq_prediction_scores, labels)
+            seq2seq_loss = seq2seq_loss - seq2seq_loss.detach()
+        else:
+            seq2seq_loss = 0.0
 
+        loss = loss + seq2seq_loss
         return loss
 
     @staticmethod
     def compute_metrics(prediction: List[int], target: List[int]):
         correct = prediction == target
         edit_distance = standard_sed(prediction, target)
+        normalised_edit_distance = edit_distance / len(target)
 
-        return MetricsContainer(correct=correct, edit_distance=edit_distance)
+        return MetricsContainer(
+            correct=correct, edit_distance=edit_distance, normalised_edit_distance=normalised_edit_distance
+        )
 
     def predict_and_evaluate(self, sources: Tensor, targets: Tensor, source_lengths: Tensor,
                              target_lengths: Tensor) -> ValidationContainer:
@@ -538,6 +455,20 @@ class InterpretableTransducer(LightningModule):
             target_lengths=batch["target_length"]
         )
 
+    def evaluation_epoch_end(self, validation: bool, outputs: List[ValidationContainer]):
+        eval_prefix = "val" if validation else "test"
+
+        # Get Metrics
+        metrics = [output.metrics for output in outputs]
+        metrics = list(chain.from_iterable(metrics))
+        wer = 1 - np.mean([output.correct for output in metrics]).item()
+        edit_distance = np.mean([output.edit_distance for output in metrics]).item()
+        normalised_edit_distance = np.mean([output.normalised_edit_distance for output in metrics]).item()
+
+        self.log(f"{eval_prefix}_wer", 100 * wer)
+        self.log(f"{eval_prefix}_edit_distance", edit_distance)
+        self.log(f"{eval_prefix}_normalised_edit_distance", normalised_edit_distance)
+
     def validation_step(self, batch, batch_idx) -> ValidationContainer:
         self.eval()
         torch.set_grad_enabled(False)
@@ -545,13 +476,7 @@ class InterpretableTransducer(LightningModule):
         return self.evaluation_step(batch=batch)
 
     def validation_epoch_end(self, outputs: List[ValidationContainer]) -> None:
-        metrics = [output.metrics for output in outputs]
-        metrics = list(chain.from_iterable(metrics))
-        wer = 1 - np.mean([output.correct for output in metrics]).item()
-        edit_distance = np.mean([output.edit_distance for output in metrics]).item()
-
-        self.log("val_wer", 100 * wer)
-        self.log("val_edit_distance", edit_distance)
+        self.evaluation_epoch_end(validation=True, outputs=outputs)
 
     def test_step(self, batch, batch_idx) -> ValidationContainer:
         self.eval()
@@ -560,14 +485,7 @@ class InterpretableTransducer(LightningModule):
         return self.evaluation_step(batch=batch)
 
     def test_epoch_end(self, outputs: List[ValidationContainer]) -> None:
-        # Compute Test Metrics
-        metrics = [output.metrics for output in outputs]
-        metrics = list(chain.from_iterable(metrics))
-        wer = 1 - np.mean([output.correct for output in metrics]).item()
-        edit_distance = np.mean([output.edit_distance for output in metrics]).item()
-
-        self.log("test_wer", 100 * wer)
-        self.log("test_edit_distance", edit_distance)
+        self.evaluation_epoch_end(validation=False, outputs=outputs)
 
     def predict_step(self, batch, batch_idx: int, dataloader_idx: Optional[int] = 0):
         self.eval()
@@ -579,3 +497,126 @@ class InterpretableTransducer(LightningModule):
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
         return optimizer
+
+    def greedy_decode(self, source: Tensor, source_length: Tensor):
+        # Define constants
+        batch_size = source.shape[0]
+        source_timesteps = source.shape[1]
+        sos_index = 2
+        eos_index = 3
+
+        # Make Masks
+        source_length = source_length.cpu()
+        target_lengths = torch.ones_like(source_length)
+        masks = self.get_masks(source_lengths=source_length, target_lengths=target_lengths)
+
+        # Embed and encode source
+        encoder_output = self.encode(source=source, source_length=source_length)
+        source_embeddings = encoder_output.source_embeddings
+        source_encodings = encoder_output.source_encodings
+
+        if self.num_symbol_features > 0:
+            symbol_features, hard_symbol_feature_scores = self.get_symbol_features(
+                source_encodings, deterministic=True
+            )
+            source_embeddings = torch.cat([source_embeddings, symbol_features], dim=-1)
+            hard_symbol_feature_scores = hard_symbol_feature_scores.detach().cpu().long()
+        else:
+            hard_symbol_feature_scores = None
+
+        # Apply Encoder -> Decoder Bridge (optional)
+        bridge_output, bridge_features, hard_bridge_features = self.compute_bridge(
+            source_encodings, masks.source_mask, deterministic=False
+        )
+
+        predictions = [torch.full((batch_size, 1), fill_value=sos_index, device=self.device, dtype=torch.long)]
+        alignments = [torch.zeros((batch_size, 2, source_timesteps), device=self.device, dtype=torch.long)]
+        decoder_states = [torch.full((batch_size,), fill_value=-1, device=self.device, dtype=torch.long)]
+        decoder_hidden = bridge_output
+        finished = torch.zeros(len(predictions), dtype=torch.bool)
+
+        for t in range(self.max_decoding_length):
+            last_prediction = predictions[-1]
+
+            # Apply Decoder
+            decoder_output = self.decode(
+                source_encodings, source_embeddings, last_prediction, target_lengths,
+                attention_mask=masks.attention_mask, decoder_hidden=decoder_hidden, deterministic_discretize=True
+            )
+
+            if self.autoregressive_order > 0:
+                window_start = max(0, len(predictions) - self.autoregressive_order)
+                autoregressive_embeddings = torch.cat(predictions[window_start:], dim=1)
+                autoregressive_embeddings = self.target_embeddings(autoregressive_embeddings)
+                autoregressive_embeddings = self.get_autoregressive_embeddings(autoregressive_embeddings)
+                autoregressive_embeddings = autoregressive_embeddings[:, -1:, :]
+                contexts = torch.cat([decoder_output.contexts, autoregressive_embeddings], dim=2)
+            else:
+                contexts = decoder_output.contexts
+
+            # Get Prediction Scores
+            prediction_scores = self.get_prediction_scores(
+                source_contexts=contexts, source_features=bridge_features,
+                decoder_states=decoder_output.decoder_states
+            )
+
+            # Get Predictions
+            prediction = torch.argmax(prediction_scores, dim=-1)
+            predictions.append(prediction)
+            decoder_hidden = decoder_output.hidden_state
+
+            alignments.append(decoder_output.source_selection.reshape(batch_size, 2, source_timesteps))
+            if self.num_decoder_states > 0:
+                decoder_states_t = decoder_output.decoder_state_selection.detach()
+                decoder_states_t = decoder_states_t.reshape(batch_size, self.num_decoder_states)
+                decoder_states_t = torch.argmax(decoder_states_t, dim=-1).long()
+                decoder_states.append(decoder_states_t)
+
+            finished = torch.logical_or(finished, torch.eq(prediction.cpu(), eos_index))
+            if torch.all(finished):
+                break
+
+        predictions = torch.cat(predictions, dim=1).detach().cpu().tolist()
+        alignments = torch.stack(alignments).permute([1, 3, 0, 2]).detach().cpu().long()
+        source_length = source_length.detach().cpu().tolist()
+
+        if self.num_decoder_states > 0:
+            decoder_states = torch.stack(decoder_states).transpose(0, 1).detach().cpu().long()
+        else:
+            decoder_states = None
+
+        if hard_bridge_features is not None:
+            sequence_features = hard_bridge_features.detach().cpu().long().tolist()
+        else:
+            sequence_features = None
+
+        truncated_predictions = []
+        truncated_alignments = []
+        truncated_symbol_features = []
+        truncated_decoder_states = []
+
+        for k, (prediction, source_length_k) in enumerate(zip(predictions, source_length)):
+            if eos_index not in prediction:
+                prediction_length = len(prediction)
+            else:
+                prediction_length = prediction.index(eos_index) + 1
+
+            truncated_predictions.append(prediction[:prediction_length])
+            truncated_alignments.append(alignments[k, :source_length_k, :prediction_length].tolist())
+
+            if hard_symbol_feature_scores is not None:
+                truncated_symbol_features.append(hard_symbol_feature_scores[k, :source_length_k, :].tolist())
+
+            if decoder_states is not None:
+                decoder_states_k = decoder_states[k, :prediction_length].tolist()
+                truncated_decoder_states.append(decoder_states_k)
+
+        if not truncated_symbol_features:
+            truncated_symbol_features = None
+        if not truncated_decoder_states:
+            truncated_decoder_states = None
+
+        return InferenceOutput(
+            predictions=truncated_predictions, alignments=truncated_alignments, sequence_features=sequence_features,
+            symbol_features=truncated_symbol_features, decoder_states=truncated_decoder_states
+        )

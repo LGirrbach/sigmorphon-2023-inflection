@@ -5,8 +5,8 @@ EncoderOutput = namedtuple(
 )
 DecoderOutput = namedtuple(
     "DecoderOutput", field_names=[
-        "contexts", "hidden_state", "source_selection", "decoder_outputs", "decoder_states", "decoder_state_selection",
-        "target_embedded"
+        "contexts", "seq2seq_contexts", "hidden_state", "source_selection", "decoder_outputs", "decoder_states",
+        "decoder_state_selection", "target_embedded"
     ]
 )
 BridgeOutput = namedtuple("BridgeOutput", field_names=["output", "feature_scores"])
@@ -19,5 +19,5 @@ InferenceOutput = namedtuple(
         "predictions", "alignments", "sequence_features", "symbol_features", "decoder_states"
     ]
 )
-MetricsContainer = namedtuple("MetricsContainer", field_names=["correct", "edit_distance"])
+MetricsContainer = namedtuple("MetricsContainer", field_names=["correct", "edit_distance", "normalised_edit_distance"])
 ValidationContainer = namedtuple("ValidationContainer", field_names=["metrics", "predictions", "targets", "sources"])
