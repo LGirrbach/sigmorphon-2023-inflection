@@ -131,9 +131,9 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
     # Make Model and Trainer
     model = _make_model(dataset, hyperparameters, num_symbol_features, num_source_features, autoregressive_order)
     trainer = Trainer(
-        max_epochs=500, log_every_n_steps=10, check_val_every_n_epoch=1, accelerator='gpu',
-        devices=1, gradient_clip_val=1.0, enable_progress_bar=verbose, logger=logger, enable_model_summary=verbose,
-        callbacks=[early_stopping_callback, checkpoint_callback],
+        max_epochs=500, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
+        devices=1, gradient_clip_val=1.0, enable_progress_bar=verbose, logger=logger,
+        enable_model_summary=verbose, callbacks=[early_stopping_callback, checkpoint_callback],
     )
 
     # Train Model and Load Best Checkpoint
