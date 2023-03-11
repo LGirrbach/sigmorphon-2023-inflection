@@ -23,13 +23,14 @@ from containers import MetricsContainer
 from containers import ValidationContainer
 from utils import make_mask_2d, make_mask_3d
 from pytorch_lightning import LightningModule
+from torch.optim.lr_scheduler import ExponentialLR
 
 
 class InterpretableTransducer(LightningModule):
     def __init__(self, source_alphabet_size: int, target_alphabet_size: int, hidden_size: int = 128,
                  num_layers: int = 1, dropout: float = 0.0, embedding_size: int = 128, num_source_features: int = 0,
                  num_symbol_features: int = 0, num_decoder_states: int = 0, autoregressive_order: int = 0,
-                 max_decoding_length: int = 100, enable_seq2seq_loss: bool = False):
+                 max_decoding_length: int = 100, enable_seq2seq_loss: bool = False, scheduler_gamma: float = 1.0):
         super().__init__()
 
         # Store Arguments
@@ -46,6 +47,7 @@ class InterpretableTransducer(LightningModule):
         self.autoregressive_order = autoregressive_order
         self.max_decoding_length = max_decoding_length
         self.enable_seq2seq_loss = enable_seq2seq_loss
+        self.scheduler_gamma = scheduler_gamma
 
         self._check_arguments()
         self.save_hyperparameters()
@@ -65,6 +67,7 @@ class InterpretableTransducer(LightningModule):
             dropout=self.dropout, projection_dim=self.hidden_size
         )
 
+        # Initialise Discrete Symbol Feature Extractor (optional)
         if self.num_symbol_features > 0:
             self.symbol_feature_classifier = nn.Sequential(
                 nn.Dropout(p=self.dropout),
@@ -79,6 +82,7 @@ class InterpretableTransducer(LightningModule):
             hidden_size=self.hidden_size, num_source_features=self.num_source_features,
             num_decoder_layers=self.num_layers
         )
+
         if self.num_source_features > 0:
             self.bridge_features = nn.Parameter(torch.empty(self.num_source_features, self.hidden_size))
             torch.nn.init.xavier_normal_(self.bridge_features)
@@ -89,11 +93,7 @@ class InterpretableTransducer(LightningModule):
             dropout=self.dropout
         )
 
-        self.source_symbol_attention_linear = nn.Identity()
-        self.target_symbol_attention_linear = nn.Identity()
-        self.source_condition_attention_linear = nn.Identity()
-        self.target_condition_attention_linear = nn.Identity()
-
+        # Initialise Decoder States (optional)
         if self.num_decoder_states > 0:
             self.decoder_state_classifier = nn.Sequential(
                 nn.Dropout(p=self.dropout),
@@ -117,7 +117,7 @@ class InterpretableTransducer(LightningModule):
             nn.Linear(self.hidden_size, self.target_alphabet_size)
         )
 
-        # Initialise Seq2Seq Classifier
+        # Initialise Seq2Seq Classifier (optional)
         if self.enable_seq2seq_loss:
             self.seq2seq_classifier = nn.Sequential(
                 nn.Dropout(p=self.dropout),
@@ -127,6 +127,7 @@ class InterpretableTransducer(LightningModule):
                 nn.Linear(self.hidden_size, self.target_alphabet_size)
             )
 
+        # Initialise Access to Previous Predictions for Interpretable Predictor (optional)
         if self.autoregressive_order > 0:
             conv_filter = []
             embedding_dim_indexer = torch.arange(self.embedding_size)
@@ -143,6 +144,16 @@ class InterpretableTransducer(LightningModule):
 
         # Initialise Loss
         self.cross_entropy = nn.CrossEntropyLoss(ignore_index=0)
+
+        self.source_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        self.target_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        self.source_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        self.target_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+
+    def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
+        scheduler = ExponentialLR(optimizer, gamma=self.scheduler_gamma)
+        return [optimizer], [scheduler]
 
     def _check_arguments(self):
         assert isinstance(self.source_alphabet_size, int) and self.source_alphabet_size > 0
@@ -168,9 +179,11 @@ class InterpretableTransducer(LightningModule):
 
     def decoder_attention(self, source_encoded: Tensor, target_encoded: Tensor, values: Tensor,
                           attention_mask: Tensor, deterministic_discretize: bool) -> Tuple[Tensor, Tensor]:
+        # Compute Attention for (Single) Symbol
+        # -> One-Hot Vector where 1 Includes Symbol (multiple 1s not possible)
         symbol_attention_output = attention(
-            encoder_states=self.source_symbol_attention_linear(source_encoded),
-            decoder_states=self.target_symbol_attention_linear(target_encoded),
+            encoder_states=source_encoded,
+            decoder_states=target_encoded,
             attention_mask=attention_mask,
             values=values,
             normalisation="softmax",
@@ -178,9 +191,11 @@ class InterpretableTransducer(LightningModule):
             deterministic_discretize=deterministic_discretize
         )
 
+        # Compute Attention for (Multiple) Conditions
+        # -> One-Hot Vector where 1 Includes Symbol (multiple 1s possible)
         condition_attention_output = attention(
-            encoder_states=self.source_symbol_attention_linear(source_encoded),
-            decoder_states=self.target_symbol_attention_linear(target_encoded),
+            encoder_states=source_encoded,
+            decoder_states=target_encoded,
             attention_mask=attention_mask,
             values=values,
             normalisation="sigmoid",
@@ -188,6 +203,7 @@ class InterpretableTransducer(LightningModule):
             deterministic_discretize=deterministic_discretize
         )
 
+        # Combine Selected Symbol and Condition
         contexts = [
             symbol_attention_output.contexts,
             condition_attention_output.contexts
@@ -493,10 +509,6 @@ class InterpretableTransducer(LightningModule):
 
         inference_output = self.greedy_decode(source=batch["source"], source_length=batch["source_length"])
         return inference_output._asdict()
-
-    def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
-        return optimizer
 
     def greedy_decode(self, source: Tensor, source_length: Tensor):
         # Define constants
