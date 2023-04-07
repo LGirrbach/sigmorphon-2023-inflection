@@ -118,6 +118,8 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
     elif os.path.exists(base_path) and overwrite:
         shutil.rmtree(base_path, ignore_errors=True)
         os.makedirs(base_path, exist_ok=True)
+    else:
+        os.makedirs(base_path, exist_ok=True)
 
     # Make Logger and Callbacks
     logger = pl_loggers.CSVLogger(save_dir=os.path.join(base_path, "logs"), name=experiment_name)
@@ -154,7 +156,7 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("Hyperparameter Tuning")
+    parser = argparse.ArgumentParser("Inflection Experiment")
     parser.add_argument("--basepath", default="./results")
     parser.add_argument("--datapath", default="./data")
     parser.add_argument("--language", type=str)
@@ -171,7 +173,7 @@ if __name__ == '__main__':
 
     hyper_parameters = Hyperparameters(
         batch_size=args.batch, hidden_size=args.hidden, num_layers=args.layers, dropout=args.dropout,
-        scheduler_gamma=args.gamma
+        scheduler_gamma=args.gamma, trial=args.trial
     )
 
     result = experiment(

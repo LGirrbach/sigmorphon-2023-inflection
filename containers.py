@@ -22,5 +22,5 @@ InferenceOutput = namedtuple(
 MetricsContainer = namedtuple("MetricsContainer", field_names=["correct", "edit_distance", "normalised_edit_distance"])
 ValidationContainer = namedtuple("ValidationContainer", field_names=["metrics", "predictions", "targets", "sources"])
 Hyperparameters = namedtuple(
-    "Hyperparameters", field_names=["batch_size", "hidden_size", "num_layers", "dropout", "scheduler_gamma"]
+    "Hyperparameters", field_names=["batch_size", "hidden_size", "num_layers", "dropout", "scheduler_gamma", "trial"]
 )

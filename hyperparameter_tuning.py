@@ -23,7 +23,7 @@ def hyperparameter_tuning(base_path: str, data_path: str, language: str, num_sym
 
         hyperparameters = Hyperparameters(
             batch_size=batch_size, num_layers=num_layers, hidden_size=hidden_size, dropout=dropout,
-            scheduler_gamma=scheduler_gamma
+            scheduler_gamma=scheduler_gamma, trial=1
         )
         result = experiment(
             base_path=base_path, data_path=data_path, language=language, hyperparameters=hyperparameters,
@@ -57,7 +57,7 @@ def hyperparameter_tuning(base_path: str, data_path: str, language: str, num_sym
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameter Tuning")
-    parser.add_argument("--basepath", default="./results")
+    parser.add_argument("--basepath", default="./tuning/results")
     parser.add_argument("--datapath", default="./data")
     parser.add_argument("--language", type=str)
     parser.add_argument("--symbol_features", type=int, default=0)

@@ -145,10 +145,10 @@ class InterpretableTransducer(LightningModule):
         # Initialise Loss
         self.cross_entropy = nn.CrossEntropyLoss(ignore_index=0)
 
-        self.source_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        self.target_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        self.source_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        self.target_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        # self.source_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        # self.target_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        # self.source_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        # self.target_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
 
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
