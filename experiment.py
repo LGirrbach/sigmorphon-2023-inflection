@@ -7,7 +7,9 @@ import argparse
 import numpy as np
 import pandas as pd
 
+from typing import Union
 from predict import predict
+from baseline import Seq2SeqModel
 from data import InflectionDataModule
 from pytorch_lightning import Trainer
 from containers import Hyperparameters
@@ -15,6 +17,9 @@ from model import InterpretableTransducer
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.callbacks import ModelCheckpoint
+
+
+Model = Union[InterpretableTransducer, Seq2SeqModel]
 
 
 def _load_dataset(language: str, data_path: str) -> InflectionDataModule:
@@ -33,33 +38,66 @@ def _represent_hyperparameter_value(value):
         return value
 
 
-def _make_experiment_name(language: str, num_symbol_features: int, num_source_features: int,
-                          autoregressive_order: int, hyperparameters: Hyperparameters) -> str:
+def _make_experiment_name(
+    language: str,
+    model_type: str,
+    num_symbol_features: int,
+    num_source_features: int,
+    autoregressive_order: int,
+    hyperparameters: Hyperparameters,
+) -> str:
     experiment_name = language
-    experiment_name = experiment_name + "-" + f"num_symbol_features={num_symbol_features}"
-    experiment_name = experiment_name + "-" + f"num_source_features={num_source_features}"
-    experiment_name = experiment_name + "-" + f"autoregressive_order={autoregressive_order}"
+    experiment_name = experiment_name + "-" + f"model={model_type}"
+    experiment_name = (
+        experiment_name + "-" + f"num_symbol_features={num_symbol_features}"
+    )
+    experiment_name = (
+        experiment_name + "-" + f"num_source_features={num_source_features}"
+    )
+    experiment_name = (
+        experiment_name + "-" + f"autoregressive_order={autoregressive_order}"
+    )
 
     hyperparameter_string = [
-        (param, _represent_hyperparameter_value(value)) for param, value in hyperparameters._asdict().items()
+        (param, _represent_hyperparameter_value(value))
+        for param, value in hyperparameters._asdict().items()
     ]
-    hyperparameter_string = [f"{param}={value}" for param, value in hyperparameter_string]
+    hyperparameter_string = [
+        f"{param}={value}" for param, value in hyperparameter_string
+    ]
     hyperparameter_string = "-".join(hyperparameter_string)
     experiment_name = experiment_name + "-" + hyperparameter_string
     return experiment_name
 
 
-def _check_arguments(num_symbol_features: int, num_source_features: int, autoregressive_order: int,
-                     hyperparameters: Hyperparameters) -> None:
+def _check_arguments(
+    num_symbol_features: int,
+    num_source_features: int,
+    autoregressive_order: int,
+    hyperparameters: Hyperparameters,
+) -> None:
     assert isinstance(num_symbol_features, int) and num_symbol_features >= 0
     assert isinstance(num_source_features, int) and num_source_features >= 0
     assert isinstance(autoregressive_order, int) and autoregressive_order >= 0
 
-    assert isinstance(hyperparameters.batch_size, int) and hyperparameters.batch_size >= 1
-    assert isinstance(hyperparameters.num_layers, int) and hyperparameters.num_layers >= 1
-    assert isinstance(hyperparameters.hidden_size, int) and hyperparameters.hidden_size >= 1
-    assert isinstance(hyperparameters.dropout, float) and 0.0 <= hyperparameters.dropout <= 1.0
-    assert isinstance(hyperparameters.scheduler_gamma, float) and hyperparameters.scheduler_gamma > 0.0
+    assert (
+        isinstance(hyperparameters.batch_size, int) and hyperparameters.batch_size >= 1
+    )
+    assert (
+        isinstance(hyperparameters.num_layers, int) and hyperparameters.num_layers >= 1
+    )
+    assert (
+        isinstance(hyperparameters.hidden_size, int)
+        and hyperparameters.hidden_size >= 1
+    )
+    assert (
+        isinstance(hyperparameters.dropout, float)
+        and 0.0 <= hyperparameters.dropout <= 1.0
+    )
+    assert (
+        isinstance(hyperparameters.scheduler_gamma, float)
+        and hyperparameters.scheduler_gamma > 0.0
+    )
 
 
 def _make_callbacks(base_path: str, experiment_name: str):
@@ -73,43 +111,82 @@ def _make_callbacks(base_path: str, experiment_name: str):
         save_last=True,
         save_top_k=1,
         mode="min",
-        verbose=False
+        verbose=False,
     )
 
     return early_stopping_callback, checkpoint_callback
 
 
-def _make_model(dataset: InflectionDataModule, hyperparameters: Hyperparameters, num_symbol_features: int,
-                num_source_features: int, autoregressive_order: int) -> InterpretableTransducer:
-    return InterpretableTransducer(
-        source_alphabet_size=dataset.source_alphabet_size,
-        target_alphabet_size=dataset.target_alphabet_size,
-        num_layers=hyperparameters.num_layers,
-        hidden_size=hyperparameters.hidden_size,
-        dropout=hyperparameters.dropout,
-        scheduler_gamma=hyperparameters.scheduler_gamma,
-        num_source_features=num_source_features,
-        num_symbol_features=num_symbol_features,
-        autoregressive_order=autoregressive_order,
-        enable_seq2seq_loss=True,
-    )
+def _make_model(
+    model_type: str,
+    dataset: InflectionDataModule,
+    hyperparameters: Hyperparameters,
+    num_symbol_features: int,
+    num_source_features: int,
+    autoregressive_order: int,
+) -> Model:
+    if model_type == "interpretable":
+        return InterpretableTransducer(
+            source_alphabet_size=dataset.source_alphabet_size,
+            target_alphabet_size=dataset.target_alphabet_size,
+            num_layers=hyperparameters.num_layers,
+            hidden_size=hyperparameters.hidden_size,
+            dropout=hyperparameters.dropout,
+            scheduler_gamma=hyperparameters.scheduler_gamma,
+            num_source_features=num_source_features,
+            num_symbol_features=num_symbol_features,
+            autoregressive_order=autoregressive_order,
+            enable_seq2seq_loss=True,
+        )
+    elif model_type == "seq2seq":
+        return Seq2SeqModel(
+            source_alphabet_size=dataset.source_alphabet_size,
+            target_alphabet_size=dataset.target_alphabet_size,
+            hidden_size=hyperparameters.hidden_size,
+            num_layers=hyperparameters.num_layers,
+            dropout=hyperparameters.dropout,
+        )
+    else:
+        raise ValueError(f"Unknown Model Type: {model_type}")
 
 
-def experiment(base_path: str, data_path: str, language: str, num_symbol_features: int, num_source_features: int,
-               autoregressive_order: int, hyperparameters: Hyperparameters, overwrite: bool = False,
-               get_predictions: bool = True, verbose: bool = False):
+def experiment(
+    base_path: str,
+    data_path: str,
+    model_type: str,
+    language: str,
+    num_symbol_features: int,
+    num_source_features: int,
+    autoregressive_order: int,
+    hyperparameters: Hyperparameters,
+    overwrite: bool = False,
+    get_predictions: bool = True,
+    verbose: bool = False,
+    enforce_cuda: bool = True,
+):
     # Global Settings
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision("medium")
 
     if not verbose:
         logging.disable(logging.WARNING)
 
     # Check Arguments
-    _check_arguments(num_symbol_features, num_source_features, autoregressive_order, hyperparameters)
+    _check_arguments(
+        num_symbol_features, num_source_features, autoregressive_order, hyperparameters
+    )
+    if enforce_cuda:
+        accelerator = "gpu"
+    else:
+        accelerator = "gou" if torch.cuda.is_available() else "cpu"
 
     # Make Experiment Name and Base Path
     experiment_name = _make_experiment_name(
-        language, num_symbol_features, num_source_features, autoregressive_order, hyperparameters
+        language,
+        model_type,
+        num_symbol_features,
+        num_source_features,
+        autoregressive_order,
+        hyperparameters,
     )
     base_path = os.path.join(base_path, experiment_name)
 
@@ -122,8 +199,12 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
         os.makedirs(base_path, exist_ok=True)
 
     # Make Logger and Callbacks
-    logger = pl_loggers.CSVLogger(save_dir=os.path.join(base_path, "logs"), name=experiment_name)
-    early_stopping_callback, checkpoint_callback = _make_callbacks(base_path, experiment_name)
+    logger = pl_loggers.CSVLogger(
+        save_dir=os.path.join(base_path, "logs"), name=experiment_name
+    )
+    early_stopping_callback, checkpoint_callback = _make_callbacks(
+        base_path, experiment_name
+    )
 
     # Prepare Data
     dataset = _load_dataset(language, data_path)
@@ -131,18 +212,40 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
     dataset.setup(stage="fit")
 
     # Make Model and Trainer
-    model = _make_model(dataset, hyperparameters, num_symbol_features, num_source_features, autoregressive_order)
+    model = _make_model(
+        model_type=model_type,
+        dataset=dataset,
+        hyperparameters=hyperparameters,
+        num_symbol_features=num_symbol_features,
+        num_source_features=num_source_features,
+        autoregressive_order=autoregressive_order,
+    )
     trainer = Trainer(
-        max_epochs=500, log_every_n_steps=1, check_val_every_n_epoch=1, accelerator='gpu',
-        devices=1, gradient_clip_val=1.0, enable_progress_bar=verbose, logger=logger,
-        enable_model_summary=verbose, callbacks=[early_stopping_callback, checkpoint_callback],
+        max_epochs=500,
+        log_every_n_steps=1,
+        check_val_every_n_epoch=1,
+        accelerator=accelerator,
+        devices=1,
+        gradient_clip_val=1.0,
+        enable_progress_bar=verbose,
+        logger=logger,
+        enable_model_summary=verbose,
+        callbacks=[early_stopping_callback, checkpoint_callback],
     )
 
     # Train Model and Load Best Checkpoint
-    trainer.fit(model=model, train_dataloaders=dataset.train_dataloader(), val_dataloaders=dataset.val_dataloader())
-    model.load_from_checkpoint(checkpoint_path=os.path.join(base_path, "saved_models", "last.ckpt"))
+    trainer.fit(
+        model=model,
+        train_dataloaders=dataset.train_dataloader(),
+        val_dataloaders=dataset.val_dataloader(),
+    )
+    model.load_from_checkpoint(
+        checkpoint_path=os.path.join(base_path, "saved_models", "last.ckpt")
+    )
 
-    logs = pd.read_csv(os.path.join(base_path, "logs", experiment_name, "version_0", "metrics.csv"))
+    logs = pd.read_csv(
+        os.path.join(base_path, "logs", experiment_name, "version_0", "metrics.csv")
+    )
     best_val_score = logs["val_normalised_edit_distance"].min()
     best_val_score = 100 * best_val_score
 
@@ -155,11 +258,17 @@ def experiment(base_path: str, data_path: str, language: str, num_symbol_feature
     return {"best_val_score": best_val_score, "predictions": predictions}
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser("Inflection Experiment")
     parser.add_argument("--basepath", default="./results")
     parser.add_argument("--datapath", default="./data")
     parser.add_argument("--language", type=str)
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["interpretable", "seq2seq"],
+        default="interpretable",
+    )
     parser.add_argument("--symbol_features", type=int, default=0)
     parser.add_argument("--source_features", type=int, default=0)
     parser.add_argument("--autoregressive_order", type=int, default=0)
@@ -172,23 +281,40 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     hyper_parameters = Hyperparameters(
-        batch_size=args.batch, hidden_size=args.hidden, num_layers=args.layers, dropout=args.dropout,
-        scheduler_gamma=args.gamma, trial=args.trial
+        batch_size=args.batch,
+        hidden_size=args.hidden,
+        num_layers=args.layers,
+        dropout=args.dropout,
+        scheduler_gamma=args.gamma,
+        trial=args.trial,
     )
 
     result = experiment(
-        base_path=args.basepath, data_path=args.datapath, language=args.language,
-        num_source_features=args.source_features, num_symbol_features=args.symbol_features,
-        autoregressive_order=args.autoregressive_order, overwrite=True, get_predictions=True, verbose=True,
-        hyperparameters=hyper_parameters
+        base_path=args.basepath,
+        data_path=args.datapath,
+        model_type=args.model,
+        language=args.language,
+        num_source_features=args.source_features,
+        num_symbol_features=args.symbol_features,
+        autoregressive_order=args.autoregressive_order,
+        overwrite=True,
+        get_predictions=True,
+        verbose=True,
+        hyperparameters=hyper_parameters,
     )
 
     print(f"\n\nBest Validation Score:\t {result['best_val_score']:.2f}\n\n")
 
     predictions_file_name = args.language
-    predictions_file_name = predictions_file_name + f"num_source_features={args.source_features}"
-    predictions_file_name = predictions_file_name + f"num_symbol_features={args.symbol_features}"
-    predictions_file_name = predictions_file_name + f"autoregressive_order={args.autoregressive_order}"
+    predictions_file_name = (
+        predictions_file_name + f"num_source_features={args.source_features}"
+    )
+    predictions_file_name = (
+        predictions_file_name + f"num_symbol_features={args.symbol_features}"
+    )
+    predictions_file_name = (
+        predictions_file_name + f"autoregressive_order={args.autoregressive_order}"
+    )
     predictions_file_name = predictions_file_name + f"trial={args.trial}"
     predictions_file_name = predictions_file_name + ".json"
 

@@ -1,26 +1,81 @@
-from collections import namedtuple
+from typing import List
+from torch import Tensor
+from typing import Optional
+from dataclasses import dataclass
 
-EncoderOutput = namedtuple(
-    "EncoderOutput", field_names=["source_embeddings", "source_encodings"]
-)
-DecoderOutput = namedtuple(
-    "DecoderOutput", field_names=[
-        "contexts", "seq2seq_contexts", "hidden_state", "source_selection", "decoder_outputs", "decoder_states",
-        "decoder_state_selection", "target_embedded"
-    ]
-)
-BridgeOutput = namedtuple("BridgeOutput", field_names=["output", "feature_scores"])
-AttentionOutput = namedtuple("AttentionOutput", field_names=["contexts", "attention_scores", "hard_attention_scores"])
-MaskContainer = namedtuple(
-    "MaskContainer", field_names=["source_mask", "target_mask", "attention_mask"]
-)
-InferenceOutput = namedtuple(
-    "InferenceOutput", field_names=[
-        "predictions", "alignments", "sequence_features", "symbol_features", "decoder_states"
-    ]
-)
-MetricsContainer = namedtuple("MetricsContainer", field_names=["correct", "edit_distance", "normalised_edit_distance"])
-ValidationContainer = namedtuple("ValidationContainer", field_names=["metrics", "predictions", "targets", "sources"])
-Hyperparameters = namedtuple(
-    "Hyperparameters", field_names=["batch_size", "hidden_size", "num_layers", "dropout", "scheduler_gamma", "trial"]
-)
+
+@dataclass
+class Hyperparameters:
+    batch_size: int
+    hidden_size: int
+    num_layers: int
+    dropout: float
+    scheduler_gamma: float
+    
+    
+@dataclass
+class Batch:
+    source: Tensor
+    source_length: Tensor
+    target: Optional[Tensor] = None
+    target_length: Optional[Tensor] = None
+
+
+@dataclass
+class EncoderOutput:
+    source_embeddings: Tensor
+    source_encodings: Tensor
+
+
+@dataclass
+class DecoderOutput:
+    contexts: Tensor
+    seq2seq_contexts: Tensor
+    hidden_state: Tensor
+    source_selection: Tensor
+    decoder_outputs: Tensor
+    decoder_states: Tensor
+    decoder_state_selection: Tensor
+    target_embedded: Tensor
+    
+    
+@dataclass
+class BridgeOutput:
+    output: Tensor
+    feature_scores: Tensor
+
+
+@dataclass
+class AttentionOutput:
+    contexts: Tensor
+    attention_scores: Tensor
+    hard_attention_scores: Tensor
+    
+
+@dataclass
+class MaskContainer:
+    source_mask: Tensor
+    target_mask: Tensor
+    attention_mask: Tensor
+
+
+@dataclass
+class AdditionalInferenceInformation:
+    alignment: Tensor
+    sequence_features: Tensor
+    symbol_features: Tensor
+    decoder_states: Tensor
+    
+
+@dataclass
+class InferenceOutput:
+    source: List[int]
+    prediction: List[int]
+    additional_information: AdditionalInferenceInformation
+
+
+@dataclass
+class Metrics:
+    correct: bool
+    edit_distance: float
+    normalised_edit_distance: float

@@ -7,7 +7,9 @@ from typing import Tuple
 from torch import Tensor
 from typing import Optional
 from itertools import chain
+from containers import Batch
 from torch.optim import AdamW
+from containers import Metrics
 from decoder import LSTMDecoder
 from attention import attention
 from bridge import EncoderBridge
@@ -19,11 +21,10 @@ from containers import DecoderOutput
 from utils import discretize_sigmoid
 from utils import discretize_softmax
 from containers import InferenceOutput
-from containers import MetricsContainer
-from containers import ValidationContainer
 from utils import make_mask_2d, make_mask_3d
 from pytorch_lightning import LightningModule
 from torch.optim.lr_scheduler import ExponentialLR
+from containers import AdditionalInferenceInformation
 
 
 class InterpretableTransducer(LightningModule):
@@ -145,11 +146,6 @@ class InterpretableTransducer(LightningModule):
         # Initialise Loss
         self.cross_entropy = nn.CrossEntropyLoss(ignore_index=0)
 
-        # self.source_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        # self.target_symbol_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        # self.source_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-        # self.target_condition_attention_linear = nn.Linear(self.hidden_size, self.hidden_size)
-
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
         scheduler = ExponentialLR(optimizer, gamma=self.scheduler_gamma)
@@ -262,7 +258,7 @@ class InterpretableTransducer(LightningModule):
 
     def get_autoregressive_embeddings(self, target_embedded: Tensor) -> Tensor:
         assert self.autoregressive_order > 0
-        batch_size, decoder_timesteps, _ = target_embedded.shape
+        batch_size, _, _ = target_embedded.shape
 
         target_embedding_ngrams = target_embedded.transpose(1, 2)
         target_embedding_padding = self.target_embedding_padding.expand(
@@ -362,14 +358,14 @@ class InterpretableTransducer(LightningModule):
             source_mask=source_mask, target_mask=target_mask, attention_mask=attention_mask
         )
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Batch, batch_idx: int) -> Tensor:
         self.train()
         torch.set_grad_enabled(True)
 
-        source = batch["source"]
-        target = batch["target"]
-        source_length = batch["source_length"].cpu()
-        target_length = batch["target_length"].cpu()
+        source = batch.source
+        target = batch.target
+        source_length = batch.source_length.cpu()
+        target_length = batch.target_length.cpu()
 
         # Make Masks
         masks = self.get_masks(source_lengths=source_length, target_lengths=target_length)
@@ -380,7 +376,7 @@ class InterpretableTransducer(LightningModule):
         source_encodings = encoder_output.source_encodings
 
         if self.num_symbol_features > 0:
-            symbol_features, hard_symbol_feature_scores = self.get_symbol_features(
+            symbol_features, _ = self.get_symbol_features(
                 source_encodings, deterministic=False
             )
             source_embeddings = torch.cat([source_embeddings, symbol_features], dim=-1)
@@ -398,7 +394,6 @@ class InterpretableTransducer(LightningModule):
 
         if self.autoregressive_order > 0:
             target_embedding_ngrams = self.get_autoregressive_embeddings(decoder_output.target_embedded)
-            # target_embedding_ngrams = target_embedding_ngrams[:, 1:, :]
             contexts = torch.cat([decoder_output.contexts, target_embedding_ngrams], dim=2)
         else:
             contexts = decoder_output.contexts
@@ -435,27 +430,31 @@ class InterpretableTransducer(LightningModule):
         return loss
 
     @staticmethod
-    def compute_metrics(prediction: List[int], target: List[int]):
+    def compute_metrics(prediction: List[int], target: List[int]) -> Metrics:
         correct = prediction == target
         edit_distance = standard_sed(prediction, target)
         normalised_edit_distance = edit_distance / len(target)
-
-        return MetricsContainer(
-            correct=correct, edit_distance=edit_distance, normalised_edit_distance=normalised_edit_distance
+        
+        return Metrics(
+            correct=correct,
+            edit_distance=edit_distance,
+            normalised_edit_distance=normalised_edit_distance
         )
 
     def predict_and_evaluate(self, sources: Tensor, targets: Tensor, source_lengths: Tensor,
-                             target_lengths: Tensor) -> ValidationContainer:
-        inference_output = self.greedy_decode(source=sources, source_length=source_lengths)
+                             target_lengths: Tensor) -> List[Metrics]:
+        inference_output: List[InferenceOutput] = self.greedy_decode(
+            source=sources, source_length=source_lengths
+        )
 
-        # Prepare Sources & Targets
-        source_lengths = source_lengths.detach().cpu().tolist()
-        sources = sources.detach().cpu().tolist()
-        sources = [source[:source_length] for source, source_length in zip(sources, source_lengths)]
-
+        # Convert Targets to List
         target_lengths = target_lengths.detach().cpu().tolist()
         targets = targets.detach().cpu().tolist()
-        targets = [target[:target_length] for target, target_length in zip(targets, target_lengths)]
+        targets = [
+            target[:target_length]
+            for target, target_length
+            in zip(targets, target_lengths)
+        ]
 
         metrics = []
 
@@ -463,20 +462,21 @@ class InterpretableTransducer(LightningModule):
             instance_metrics = self.compute_metrics(prediction, target)
             metrics.append(instance_metrics)
 
-        return ValidationContainer(metrics=metrics, predictions=inference_output, targets=targets, sources=sources)
+        return metrics
 
-    def evaluation_step(self, batch) -> ValidationContainer:
+    def evaluation_step(self, batch: Batch) -> List[Metrics]:
         return self.predict_and_evaluate(
-            sources=batch["source"], targets=batch["target"], source_lengths=batch["source_length"],
-            target_lengths=batch["target_length"]
+            sources=batch.source,
+            targets=batch.target,
+            source_lengths=batch.source_length,
+            target_lengths=batch.target_length
         )
 
-    def evaluation_epoch_end(self, validation: bool, outputs: List[ValidationContainer]):
-        eval_prefix = "val" if validation else "test"
-
-        # Get Metrics
-        metrics = [output.metrics for output in outputs]
-        metrics = list(chain.from_iterable(metrics))
+    def evaluation_epoch_end(self, eval_prefix: str, outputs: List[List[Metrics]]):
+        # Flatten Metrics
+        metrics = list(chain.from_iterable(outputs))
+        
+        # Aggregate Metrics
         wer = 1 - np.mean([output.correct for output in metrics]).item()
         edit_distance = np.mean([output.edit_distance for output in metrics]).item()
         normalised_edit_distance = np.mean([output.normalised_edit_distance for output in metrics]).item()
@@ -485,32 +485,25 @@ class InterpretableTransducer(LightningModule):
         self.log(f"{eval_prefix}_edit_distance", edit_distance)
         self.log(f"{eval_prefix}_normalised_edit_distance", normalised_edit_distance)
 
-    def validation_step(self, batch, batch_idx) -> ValidationContainer:
-        self.eval()
-        torch.set_grad_enabled(False)
-
+    def validation_step(self, batch: Batch, batch_idx: int) -> List[Metrics]:
         return self.evaluation_step(batch=batch)
 
-    def validation_epoch_end(self, outputs: List[ValidationContainer]) -> None:
-        self.evaluation_epoch_end(validation=True, outputs=outputs)
+    def validation_epoch_end(self, outputs: List[List[Metrics]]) -> None:
+        self.evaluation_epoch_end(eval_prefix="val", outputs=outputs)
 
-    def test_step(self, batch, batch_idx) -> ValidationContainer:
-        self.eval()
-        torch.set_grad_enabled(False)
-
+    def test_step(self, batch: Batch, batch_idx: int) -> List[Metrics]:
         return self.evaluation_step(batch=batch)
 
-    def test_epoch_end(self, outputs: List[ValidationContainer]) -> None:
-        self.evaluation_epoch_end(validation=False, outputs=outputs)
+    def test_epoch_end(self, outputs: List[List[Metrics]]) -> None:
+        self.evaluation_epoch_end(eval_prefix="test", outputs=outputs)
 
-    def predict_step(self, batch, batch_idx: int, dataloader_idx: Optional[int] = 0):
-        self.eval()
-        torch.set_grad_enabled(False)
+    def predict_step(self, batch: Batch, batch_idx: int, dataloader_idx: Optional[int] = 0) -> List[InferenceOutput]:
+        return self.greedy_decode(
+            source=batch.source,
+            source_length=batch.source_length
+        )
 
-        inference_output = self.greedy_decode(source=batch["source"], source_length=batch["source_length"])
-        return inference_output._asdict()
-
-    def greedy_decode(self, source: Tensor, source_length: Tensor):
+    def greedy_decode(self, source: Tensor, source_length: Tensor) -> List[InferenceOutput]:
         # Define constants
         batch_size = source.shape[0]
         source_timesteps = source.shape[1]
@@ -589,46 +582,70 @@ class InterpretableTransducer(LightningModule):
                 break
 
         predictions = torch.cat(predictions, dim=1).detach().cpu().tolist()
-        alignments = torch.stack(alignments).permute([1, 3, 0, 2]).detach().cpu().long()
+        alignments = torch.stack(alignments).permute([1, 3, 0, 2])
+        alignments = alignments.detach().cpu().long()
         source_length = source_length.detach().cpu().tolist()
 
         if self.num_decoder_states > 0:
-            decoder_states = torch.stack(decoder_states).transpose(0, 1).detach().cpu().long()
+            decoder_states = torch.stack(decoder_states).transpose(0, 1)
+            decoder_states = decoder_states.detach().cpu().long()
         else:
             decoder_states = None
 
         if hard_bridge_features is not None:
-            sequence_features = hard_bridge_features.detach().cpu().long().tolist()
+            sequence_features = hard_bridge_features.detach().cpu().long()
         else:
             sequence_features = None
-
-        truncated_predictions = []
-        truncated_alignments = []
-        truncated_symbol_features = []
-        truncated_decoder_states = []
+        
+        outputs = []
 
         for k, (prediction, source_length_k) in enumerate(zip(predictions, source_length)):
+            # Get Source for k-th batch element
+            source_k = source[k, :source_length_k].detach().cpu().tolist()
+            
+            # Get Prediction for k-th batch element
             if eos_index not in prediction:
                 prediction_length = len(prediction)
             else:
                 prediction_length = prediction.index(eos_index) + 1
+                
+            prediction_k = prediction[:prediction_length]
 
-            truncated_predictions.append(prediction[:prediction_length])
-            truncated_alignments.append(alignments[k, :source_length_k, :prediction_length].tolist())
-
+            # Get Alignment for k-th batch element
+            alignment_k = alignments[k, :source_length_k, :prediction_length]
+            alignment_k = alignment_k.tolist()
+            
+            # Get Symbol Features for k-th batch element
             if hard_symbol_feature_scores is not None:
-                truncated_symbol_features.append(hard_symbol_feature_scores[k, :source_length_k, :].tolist())
-
+                symbol_features_k = hard_symbol_feature_scores[k, :source_length_k, :]
+                symbol_features_k = symbol_features_k.tolist()
+            else:
+                symbol_features_k = None
+            
+            # Get Decoder States for k-th batch element
             if decoder_states is not None:
-                decoder_states_k = decoder_states[k, :prediction_length].tolist()
-                truncated_decoder_states.append(decoder_states_k)
+                decoder_states_k = decoder_states[k, :prediction_length]
+                decoder_states_k = decoder_states_k.tolist()
+            else:
+                decoder_states_k = None
+                
+            # Get Sequence Features for k-th batch element
+            if sequence_features is not None:
+                sequence_features_k = sequence_features[k]
+            else:
+                sequence_features_k = None
+                
+            additional_information_k = AdditionalInferenceInformation(
+                alignment=alignment_k,
+                sequence_features=sequence_features_k,
+                symbol_features=symbol_features_k,
+                decoder_states=decoder_states_k
+            )
+            inference_output = InferenceOutput(
+                source=source_k,
+                prediction=prediction_k,
+                additional_information=additional_information_k
+            )
+            outputs.append(inference_output)
 
-        if not truncated_symbol_features:
-            truncated_symbol_features = None
-        if not truncated_decoder_states:
-            truncated_decoder_states = None
-
-        return InferenceOutput(
-            predictions=truncated_predictions, alignments=truncated_alignments, sequence_features=sequence_features,
-            symbol_features=truncated_symbol_features, decoder_states=truncated_decoder_states
-        )
+        return outputs

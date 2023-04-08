@@ -4,11 +4,10 @@ import torch
 import regex
 import pandas as pd
 
-from typing import Dict
 from typing import List
 from typing import Tuple
-from torch import Tensor
 from typing import Optional
+from containers import Batch
 from functools import partial
 from torchtext.vocab import Vocab
 from torch.utils.data import DataLoader
@@ -36,7 +35,7 @@ def dekanjify(source: Sequence) -> Sequence:
 
 
 def _batch_collate(batch, source_tokenizer: Vocab, target_tokenizer: Vocab, sos_token: str = "[SOS]",
-                   eos_token: str = "[EOS]") -> Dict[str, Tensor]:
+                   eos_token: str = "[EOS]") -> Batch:
     sources, targets = zip(*batch)
 
     # Encode sources
@@ -54,11 +53,13 @@ def _batch_collate(batch, source_tokenizer: Vocab, target_tokenizer: Vocab, sos_
     target_tensor = [torch.tensor(target).long() for target in targets]
     target_tensor = pad_sequence(target_tensor, batch_first=True, padding_value=0)
     target_length = torch.tensor([len(target) for target in targets]).long()
-
-    return {
-        "source": source_tensor, "source_length": source_length,
-        "target": target_tensor, "target_length": target_length
-    }
+    
+    return Batch(
+        source=source_tensor,
+        target=target_tensor,
+        source_length=source_length,
+        target_length=target_length
+    )
 
 
 class Seq2SeqDataModule(LightningDataModule):

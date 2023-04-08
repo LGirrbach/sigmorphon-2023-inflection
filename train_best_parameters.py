@@ -1,4 +1,3 @@
-import os
 import json
 import argparse
 
@@ -17,6 +16,7 @@ if __name__ == '__main__':
     parser.add_argument("--basepath", default="./retrain_results")
     parser.add_argument("--datapath", default="./data")
     parser.add_argument("--language", type=str)
+    parser.add_argument("--model", type=str, choices=["interpretable", "seq2seq"], default="interpretable")
     parser.add_argument("--trial", type=int, default=1)
     parser.add_argument("--symbol_features", type=int, default=0)
     parser.add_argument("--source_features", type=int, default=0)
@@ -39,6 +39,7 @@ if __name__ == '__main__':
         base_path=args.basepath,
         data_path=args.datapath,
         language=args.language,
+        model_type=args.model,
         num_source_features=args.source_features,
         num_symbol_features=args.symbol_features,
         autoregressive_order=args.autoregressive_order,
