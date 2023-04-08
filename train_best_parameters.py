@@ -31,8 +31,7 @@ if __name__ == '__main__':
         hidden_size=int(language_parameters["hidden_size"]),
         num_layers=int(language_parameters["num_layers"]),
         dropout=language_parameters["dropout"],
-        scheduler_gamma=language_parameters["scheduler_gamma"],
-        trial=args.trial
+        scheduler_gamma=language_parameters["scheduler_gamma"]
     )
 
     result = experiment(
@@ -46,5 +45,6 @@ if __name__ == '__main__':
         overwrite=True,
         get_predictions=False,
         verbose=False,
-        hyperparameters=hyper_parameters
+        hyperparameters=hyper_parameters,
+        trial=args.trial
     )

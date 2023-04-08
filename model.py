@@ -173,7 +173,8 @@ class InterpretableTransducer(LightningModule):
 
         return EncoderOutput(source_embeddings=source_embedded, source_encodings=source_encoded)
 
-    def decoder_attention(self, source_encoded: Tensor, target_encoded: Tensor, values: Tensor,
+    @staticmethod
+    def decoder_attention(source_encoded: Tensor, target_encoded: Tensor, values: Tensor,
                           attention_mask: Tensor, deterministic_discretize: bool) -> Tuple[Tensor, Tensor]:
         # Compute Attention for (Single) Symbol
         # -> One-Hot Vector where 1 Includes Symbol (multiple 1s not possible)
@@ -443,7 +444,7 @@ class InterpretableTransducer(LightningModule):
 
     def predict_and_evaluate(self, sources: Tensor, targets: Tensor, source_lengths: Tensor,
                              target_lengths: Tensor) -> List[Metrics]:
-        inference_output: List[InferenceOutput] = self.greedy_decode(
+        inference_outputs: List[InferenceOutput] = self.greedy_decode(
             source=sources, source_length=source_lengths
         )
 
@@ -456,12 +457,10 @@ class InterpretableTransducer(LightningModule):
             in zip(targets, target_lengths)
         ]
 
-        metrics = []
-
-        for prediction, target in zip(inference_output.predictions, targets):
-            instance_metrics = self.compute_metrics(prediction, target)
-            metrics.append(instance_metrics)
-
+        metrics = [
+            self.compute_metrics(output.prediction, target)
+            for output, target in zip(inference_outputs, targets)
+        ]
         return metrics
 
     def evaluation_step(self, batch: Batch) -> List[Metrics]:

@@ -7,7 +7,6 @@ from torch import Tensor
 from typing import Tuple
 from typing import Union
 from typing import Optional
-from typing import Iterable
 from itertools import chain
 from torch.optim import AdamW
 from dataclasses import dataclass
@@ -38,8 +37,8 @@ class EncoderOutput:
 @dataclass
 class DecoderOutput:
     encoded: Tensor
-    new_hidden_state: Tensor
-    old_hidden_state: Tensor
+    new_hidden_state: LSTM_HIDDEN
+    old_hidden_state: LSTM_HIDDEN
 
 
 @dataclass
@@ -66,7 +65,6 @@ class Metrics:
     correct: bool
     edit_distance: float
     normalised_edit_distance: float
-
 
 
 def make_mask_2d(lengths: Tensor) -> Tensor:
@@ -351,7 +349,8 @@ class Seq2SeqModel(LightningModule):
         decoder_lengths: Tensor,
     ):
         """
-        Computes dot product attention scores between encoder and decoder states and computes corresponding context vectors
+        Computes dot product attention scores between encoder and decoder states and computes corresponding context
+        vectors
         """
         # encoder_states: shape [batch x timesteps encoder x hidden]
         # decoder_states: shape [batch x timesteps decoder x hidden]
@@ -396,11 +395,11 @@ class Seq2SeqModel(LightningModule):
     def encode_target(self, target: Tensor, target_length: Tensor, decoder_hidden=None):
         # Embed and Encode targets
         target_embedded = self.target_embeddings(target)
-        decoder_output = self.decoder(
+        decoder_output: DecoderOutput = self.decoder(
             target_embedded, target_length, hidden_state=decoder_hidden
         )
 
-        return decoder_output.encoded, decoder_output.hidden
+        return decoder_output.encoded, decoder_output.new_hidden_state
 
     def get_initial_decoder_hidden(
         self, source_encoded, source_length
@@ -487,7 +486,7 @@ class Seq2SeqModel(LightningModule):
 
     def predict_and_evaluate(self, sources: Tensor, targets: Tensor, source_lengths: Tensor,
                              target_lengths: Tensor) -> List[Metrics]:
-        inference_output: List[InferenceOutput] = self.greedy_decode(
+        inference_outputs: List[InferenceOutput] = self.greedy_decode(
             source=sources, source_length=source_lengths
         )
 
@@ -500,20 +499,21 @@ class Seq2SeqModel(LightningModule):
             in zip(targets, target_lengths)
         ]
 
-        metrics = []
-
-        for prediction, target in zip(inference_output.predictions, targets):
-            instance_metrics = self.compute_metrics(prediction, target)
-            metrics.append(instance_metrics)
-
+        metrics = [
+            self.compute_metrics(output.prediction, target)
+            for output, target in zip(inference_outputs, targets)
+        ]
         return metrics
 
     def evaluation_step(self, batch: Batch) -> List[Metrics]:
+        # Unpack batch container
+        source, target, source_length, target_length = self.unpack_batch(batch=batch)
+
         return self.predict_and_evaluate(
-            sources=batch.source,
-            targets=batch.target,
-            source_lengths=batch.source_length,
-            target_lengths=batch.target_length
+            sources=source,
+            targets=target,
+            source_lengths=source_length,
+            target_lengths=target_length
         )
 
     def evaluation_epoch_end(self, eval_prefix: str, outputs: List[List[Metrics]]):
@@ -544,7 +544,7 @@ class Seq2SeqModel(LightningModule):
     def predict_step(self, batch: Batch, batch_idx: int, dataloader_idx: Optional[int] = 0) -> List[InferenceOutput]:
         return self.greedy_decode(
             source=batch.source,
-            source_length=batch.source_length
+            source_length=batch.source_length.cpu()
         )
 
     def greedy_decode(self, source: Tensor, source_length: Tensor) -> List[InferenceOutput]:
@@ -642,8 +642,14 @@ class Seq2SeqModel(LightningModule):
             attention_scores_k = attention_scores[k, :source_length[k], : prediction_length_k]
             attention_scores_k = attention_scores_k.cpu()
             
-            additional_information_k = AdditionalInferenceInformation(attention_scores=attention_scores_k)
-            output_k = InferenceOutput(source=source_k, prediction=prediction_k, additional_information=additional_information_k)
+            additional_information_k = AdditionalInferenceInformation(
+                attention_scores=attention_scores_k
+            )
+            output_k = InferenceOutput(
+                source=source_k,
+                prediction=prediction_k,
+                additional_information=additional_information_k
+            )
             outputs.append(output_k)
         
         return outputs

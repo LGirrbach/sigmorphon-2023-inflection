@@ -2,7 +2,7 @@ import os
 import json
 import pandas as pd
 
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 
 def remove_parameter_name_prefix(parameter_name: str) -> str:

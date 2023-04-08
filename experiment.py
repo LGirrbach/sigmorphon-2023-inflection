@@ -1,7 +1,7 @@
 import os
-import json
 import torch
 import shutil
+import pickle
 import logging
 import argparse
 import numpy as np
@@ -9,6 +9,7 @@ import pandas as pd
 
 from typing import Union
 from predict import predict
+from dataclasses import asdict
 from baseline import Seq2SeqModel
 from data import InflectionDataModule
 from pytorch_lightning import Trainer
@@ -45,9 +46,11 @@ def _make_experiment_name(
     num_source_features: int,
     autoregressive_order: int,
     hyperparameters: Hyperparameters,
+    trial: int
 ) -> str:
     experiment_name = language
     experiment_name = experiment_name + "-" + f"model={model_type}"
+    experiment_name = experiment_name + "-" + f"trial={trial}"
     experiment_name = (
         experiment_name + "-" + f"num_symbol_features={num_symbol_features}"
     )
@@ -60,7 +63,7 @@ def _make_experiment_name(
 
     hyperparameter_string = [
         (param, _represent_hyperparameter_value(value))
-        for param, value in hyperparameters._asdict().items()
+        for param, value in asdict(hyperparameters).items()
     ]
     hyperparameter_string = [
         f"{param}={value}" for param, value in hyperparameter_string
@@ -163,6 +166,7 @@ def experiment(
     get_predictions: bool = True,
     verbose: bool = False,
     enforce_cuda: bool = True,
+    trial: int = 0
 ):
     # Global Settings
     torch.set_float32_matmul_precision("medium")
@@ -187,6 +191,7 @@ def experiment(
         num_source_features,
         autoregressive_order,
         hyperparameters,
+        trial
     )
     base_path = os.path.join(base_path, experiment_name)
 
@@ -285,8 +290,7 @@ if __name__ == "__main__":
         hidden_size=args.hidden,
         num_layers=args.layers,
         dropout=args.dropout,
-        scheduler_gamma=args.gamma,
-        trial=args.trial,
+        scheduler_gamma=args.gamma
     )
 
     result = experiment(
@@ -301,23 +305,25 @@ if __name__ == "__main__":
         get_predictions=True,
         verbose=True,
         hyperparameters=hyper_parameters,
+        trial=args.trial
     )
 
     print(f"\n\nBest Validation Score:\t {result['best_val_score']:.2f}\n\n")
 
     predictions_file_name = args.language
+    predictions_file_name = predictions_file_name + "-" + f"model={args.model}"
+    predictions_file_name = predictions_file_name + "-" + f"trial={args.trial}"
     predictions_file_name = (
-        predictions_file_name + f"num_source_features={args.source_features}"
+        predictions_file_name + "-" + f"num_source_features={args.source_features}"
     )
     predictions_file_name = (
-        predictions_file_name + f"num_symbol_features={args.symbol_features}"
+        predictions_file_name + "-" + f"num_symbol_features={args.symbol_features}"
     )
     predictions_file_name = (
-        predictions_file_name + f"autoregressive_order={args.autoregressive_order}"
+        predictions_file_name + "-" + f"autoregressive_order={args.autoregressive_order}"
     )
-    predictions_file_name = predictions_file_name + f"trial={args.trial}"
-    predictions_file_name = predictions_file_name + ".json"
+    predictions_file_name = predictions_file_name + ".pickle"
 
     os.makedirs("./predictions", exist_ok=True)
-    with open(os.path.join("./predictions", predictions_file_name), "w") as psf:
-        json.dump(result["predictions"], psf)
+    with open(os.path.join("./predictions", predictions_file_name), "wb") as psf:
+        pickle.dump(result["predictions"], psf)

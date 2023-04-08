@@ -4,40 +4,26 @@ from typing import Dict
 from typing import Optional
 from itertools import chain
 from functools import partial
+from dataclasses import asdict
 from torchtext.vocab import Vocab
 from pytorch_lightning import Trainer
 from data import InflectionDataModule
+from containers import InferenceOutput
 from model import InterpretableTransducer
 
 
-def _un_batch_predictions(results: List[Dict[str, Any]]) -> Dict[str, Optional[List[Any]]]:
-    predictions = list(chain.from_iterable([batch_results["predictions"] for batch_results in results]))
-    alignments = list(chain.from_iterable([batch_results["alignments"] for batch_results in results]))
+def _un_batch_predictions(results: List[List[InferenceOutput]]) -> Dict[str, Optional[List[Any]]]:
+    # Flatten Results
+    results = list(chain.from_iterable(results))
 
-    sequence_features = [batch_results["sequence_features"] for batch_results in results]
-    if any(features is None for features in sequence_features):
-        sequence_features = None
-    else:
-        sequence_features = list(chain.from_iterable(sequence_features))
-
-    symbol_features = [batch_results["symbol_features"] for batch_results in results]
-    if any(features is None for features in symbol_features):
-        symbol_features = None
-    else:
-        symbol_features = list(chain.from_iterable(symbol_features))
-
-    decoder_states = [batch_results["symbol_features"] for batch_results in results]
-    if any(states is None for states in decoder_states):
-        decoder_states = None
-    else:
-        decoder_states = list(chain.from_iterable(decoder_states))
+    sources = [sample_result.source for sample_result in results]
+    predictions = [sample_result.prediction for sample_result in results]
+    additional_information = [asdict(sample_result.additional_information) for sample_result in results]
 
     return {
+        "sources": sources,
         "predictions": predictions,
-        "alignments": alignments,
-        "sequence_features": symbol_features,
-        "symbol_features": sequence_features,
-        "decoder_states": decoder_states
+        "additional_information": additional_information
     }
 
 
