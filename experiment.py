@@ -181,7 +181,7 @@ def experiment(
     if enforce_cuda:
         accelerator = "gpu"
     else:
-        accelerator = "gou" if torch.cuda.is_available() else "cpu"
+        accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
     # Make Experiment Name and Base Path
     experiment_name = _make_experiment_name(
