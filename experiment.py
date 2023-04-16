@@ -27,7 +27,7 @@ def _load_dataset(language: str, data_path: str) -> InflectionDataModule:
     data_module = InflectionDataModule.from_files(
         train_path=os.path.join(data_path, f"{language}.trn"),
         dev_path=os.path.join(data_path, f"{language}.dev"),
-        test_path=os.path.join(data_path, f"{language}.covered.dev"),
+        test_path=os.path.join(data_path, f"{language}.covered.tst"),
     )
     return data_module
 

@@ -56,10 +56,10 @@ def predict(
         model=model, dataloaders=dataset.val_dataloader()
     )
     validation_predictions = _un_batch_predictions(validation_predictions)
-    # test_predictions = trainer.predict(
-    #     model=model, dataloaders=dataset.test_dataloader()
-    # )
-    # test_predictions = _un_batch_predictions(test_predictions)
+    test_predictions = trainer.predict(
+        model=model, dataloaders=dataset.test_dataloader()
+    )
+    test_predictions = _un_batch_predictions(test_predictions)
 
     # Decode Predictions
     decode_target = partial(_decode, tokenizer=dataset.target_tokenizer)
@@ -67,29 +67,29 @@ def predict(
     validation_predictions["predictions"] = decode_target(
         validation_predictions["predictions"]
     )
-    # test_predictions["predictions"] = decode_target(test_predictions["predictions"])
+    test_predictions["predictions"] = decode_target(test_predictions["predictions"])
 
     # Get Sources and Targets
     # train_sources, train_targets = zip(*dataset.train_data)
     validation_sources, validation_targets = zip(*dataset.dev_data)
-    # test_sources, test_targets = zip(*dataset.test_data)
+    test_sources, test_targets = zip(*dataset.test_data)
 
     # train_sources = _add_sos_eos_tokens(train_sources)
     # train_targets = _add_sos_eos_tokens(train_targets)
     validation_sources = _add_sos_eos_tokens(validation_sources)
     validation_targets = _add_sos_eos_tokens(validation_targets)
-    # test_sources = _add_sos_eos_tokens(test_sources)
-    # test_targets = _add_sos_eos_tokens(test_targets)
+    test_sources = _add_sos_eos_tokens(test_sources)
+    test_targets = _add_sos_eos_tokens(test_targets)
 
     # Add Sources & Targets to predictions dicts
     # train_predictions["sources"] = train_sources
     # train_predictions["targets"] = train_targets
     validation_predictions["sources"] = validation_sources
     validation_predictions["targets"] = validation_targets
-    # test_predictions["sources"] = test_sources
-    # test_predictions["targets"] = test_targets
+    test_predictions["sources"] = test_sources
+    test_predictions["targets"] = test_targets
 
     # Save
     # predictions = {"train": train_predictions, "validation": validation_predictions, "test": test_predictions}
-    predictions = {"validation": validation_predictions}
+    predictions = {"validation": validation_predictions, "test": test_predictions}
     return predictions
