@@ -1,0 +1,13 @@
+numpy
+optuna==3.1.0
+pandas==1.5.3
+pytorch-lightning==1.9.4
+rich==13.3.2
+scikit-learn
+scipy==1.10.0
+seaborn
+torch==1.13.1
+torchtext
+tqdm
+edist
+regex
