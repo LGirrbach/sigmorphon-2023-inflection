@@ -11,13 +11,19 @@ def discretize_sigmoid(scores, deterministic: bool = True) -> torch.Tensor:
     return discrete_scores.float()
 
 
-def discretize_softmax(scores: torch.Tensor, deterministic: bool = True, dim: int = 1) -> torch.Tensor:
+def discretize_softmax(
+    scores: torch.Tensor, deterministic: bool = True, dim: int = 1
+) -> torch.Tensor:
     if deterministic:
         discrete_scores = torch.argmax(scores, dim=dim)
-        discrete_scores = torch.nn.functional.one_hot(discrete_scores, num_classes=scores.shape[dim])
+        discrete_scores = torch.nn.functional.one_hot(
+            discrete_scores, num_classes=scores.shape[dim]
+        )
         discrete_scores = discrete_scores.transpose(dim, -1)
     else:
-        discrete_scores = torch.nn.functional.gumbel_softmax(scores, tau=1.0, hard=True, dim=dim)
+        discrete_scores = torch.nn.functional.gumbel_softmax(
+            scores, tau=1.0, hard=True, dim=dim
+        )
 
     return discrete_scores.float()
 
@@ -28,7 +34,9 @@ def make_mask_2d(lengths: torch.Tensor, expand_dim: int = None):
     assert len(lengths.shape) == 1
 
     max_length = torch.amax(lengths, dim=0).item()
-    mask = torch.arange(max_length).expand((lengths.shape[0], max_length))  # Shape batch x timesteps
+    mask = torch.arange(max_length).expand(
+        (lengths.shape[0], max_length)
+    )  # Shape batch x timesteps
     mask = torch.ge(mask, lengths.unsqueeze(1))
 
     if expand_dim is not None:
@@ -45,8 +53,8 @@ def make_mask_3d(source_lengths: torch.Tensor, target_lengths: torch.Tensor):
     """
     # Calculate binary masks for source and target
     # Then invert boolean values and convert to float (necessary for bmm later)
-    source_mask = (~ make_mask_2d(source_lengths)).float()
-    target_mask = (~ make_mask_2d(target_lengths)).float()
+    source_mask = (~make_mask_2d(source_lengths)).float()
+    target_mask = (~make_mask_2d(target_lengths)).float()
 
     # Add dummy dimensions for bmm
     source_mask = source_mask.unsqueeze(2)

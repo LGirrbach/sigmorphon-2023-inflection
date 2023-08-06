@@ -12,7 +12,14 @@ class LSTMDecoder(nn.Module):
     Note: This implementation projects the combined hidden states of the forward and backward LSTMs to the common
           hidden dimension
     """
-    def __init__(self, input_size: int, hidden_size: int = 128, num_layers: int = 1, dropout: float = 0.0):
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 128,
+        num_layers: int = 1,
+        dropout: float = 0.0,
+    ):
         super(LSTMDecoder, self).__init__()
 
         # Save arguments
@@ -23,8 +30,12 @@ class LSTMDecoder(nn.Module):
 
         # Initialise modules
         self.lstm = nn.LSTM(
-            input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True,
-            bidirectional=False, dropout=(dropout if num_layers > 1 else 0.0)
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=False,
+            dropout=(dropout if num_layers > 1 else 0.0),
         )
 
         # Initialise trainable hidden state initialisations
@@ -35,8 +46,12 @@ class LSTMDecoder(nn.Module):
         batch_size = len(lengths)
 
         # Pack sequence
-        lengths = torch.clamp(lengths, 1)  # Enforce all lengths are >= 1 (required by pytorch)
-        inputs = pack_padded_sequence(inputs, lengths, batch_first=True, enforce_sorted=False)
+        lengths = torch.clamp(
+            lengths, 1
+        )  # Enforce all lengths are >= 1 (required by pytorch)
+        inputs = pack_padded_sequence(
+            inputs, lengths, batch_first=True, enforce_sorted=False
+        )
 
         # Prepare hidden states
         if hidden_state is None:
@@ -49,4 +64,8 @@ class LSTMDecoder(nn.Module):
         encoded, new_hidden_state = self.lstm(inputs, (h_0, c_0))
         encoded, _ = pad_packed_sequence(encoded, batch_first=True)
 
-        return {"encoded": encoded, "new_hidden_state": new_hidden_state, "old_hidden_state": hidden_state}
+        return {
+            "encoded": encoded,
+            "new_hidden_state": new_hidden_state,
+            "old_hidden_state": hidden_state,
+        }

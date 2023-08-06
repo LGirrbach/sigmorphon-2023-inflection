@@ -51,7 +51,7 @@ class AttentionOutput:
 @dataclass
 class AdditionalInferenceInformation:
     attention_scores: Tensor
-    
+
 
 @dataclass
 class InferenceOutput:
@@ -73,7 +73,9 @@ def make_mask_2d(lengths: Tensor) -> Tensor:
     assert len(lengths.shape) == 1
 
     max_length = torch.amax(lengths, dim=0).item()
-    mask = torch.arange(max_length).expand((lengths.shape[0], max_length))  # Shape batch x timesteps
+    mask = torch.arange(max_length).expand(
+        (lengths.shape[0], max_length)
+    )  # Shape batch x timesteps
     mask = torch.ge(mask, lengths.unsqueeze(1))
 
     return mask
@@ -86,8 +88,8 @@ def make_mask_3d(source_lengths: Tensor, target_lengths: Tensor) -> Tensor:
     """
     # Calculate binary masks for source and target
     # Then invert boolean values and convert to long (necessary for bmm later)
-    source_mask = (~ make_mask_2d(source_lengths)).long()
-    target_mask = (~ make_mask_2d(target_lengths)).long()
+    source_mask = (~make_mask_2d(source_lengths)).long()
+    target_mask = (~make_mask_2d(target_lengths)).long()
 
     # Add dummy dimensions for bmm
     source_mask = source_mask.unsqueeze(2)
@@ -330,12 +332,15 @@ class Seq2SeqModel(LightningModule):
         assert isinstance(self.hidden_size, int) and self.hidden_size > 0
         assert isinstance(self.num_layers, int) and 0 < self.num_layers < 5
         assert isinstance(self.dropout, float) and 0.0 <= self.dropout < 1.0
-        assert isinstance(self.scheduler_gamma, float) and 0.0 < self.scheduler_gamma <= 1.0
+        assert (
+            isinstance(self.scheduler_gamma, float)
+            and 0.0 < self.scheduler_gamma <= 1.0
+        )
         assert (
             isinstance(self.max_decoding_length, int) and self.max_decoding_length > 0
         )
         assert isinstance(self.bridge, bool)
-        
+
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), weight_decay=0.0, lr=0.001)
         scheduler = ExponentialLR(optimizer, gamma=self.scheduler_gamma)
@@ -425,7 +430,7 @@ class Seq2SeqModel(LightningModule):
         target = batch.target
         source_length = batch.source_length
         target_length = batch.target_length
-        
+
         if source_length is not None:
             source_length = source_length.cpu()
         if target_length is not None:
@@ -477,15 +482,20 @@ class Seq2SeqModel(LightningModule):
         correct = prediction == target
         edit_distance = standard_sed(prediction, target)
         normalised_edit_distance = edit_distance / len(target)
-        
+
         return Metrics(
             correct=correct,
             edit_distance=edit_distance,
-            normalised_edit_distance=normalised_edit_distance
+            normalised_edit_distance=normalised_edit_distance,
         )
 
-    def predict_and_evaluate(self, sources: Tensor, targets: Tensor, source_lengths: Tensor,
-                             target_lengths: Tensor) -> List[Metrics]:
+    def predict_and_evaluate(
+        self,
+        sources: Tensor,
+        targets: Tensor,
+        source_lengths: Tensor,
+        target_lengths: Tensor,
+    ) -> List[Metrics]:
         inference_outputs: List[InferenceOutput] = self.greedy_decode(
             source=sources, source_length=source_lengths
         )
@@ -495,8 +505,7 @@ class Seq2SeqModel(LightningModule):
         targets = targets.detach().cpu().tolist()
         targets = [
             target[:target_length]
-            for target, target_length
-            in zip(targets, target_lengths)
+            for target, target_length in zip(targets, target_lengths)
         ]
 
         metrics = [
@@ -513,17 +522,19 @@ class Seq2SeqModel(LightningModule):
             sources=source,
             targets=target,
             source_lengths=source_length,
-            target_lengths=target_length
+            target_lengths=target_length,
         )
 
     def evaluation_epoch_end(self, eval_prefix: str, outputs: List[List[Metrics]]):
         # Flatten Metrics
         metrics = list(chain.from_iterable(outputs))
-        
+
         # Aggregate Metrics
         wer = 1 - np.mean([output.correct for output in metrics]).item()
         edit_distance = np.mean([output.edit_distance for output in metrics]).item()
-        normalised_edit_distance = np.mean([output.normalised_edit_distance for output in metrics]).item()
+        normalised_edit_distance = np.mean(
+            [output.normalised_edit_distance for output in metrics]
+        ).item()
 
         self.log(f"{eval_prefix}_wer", 100 * wer)
         self.log(f"{eval_prefix}_edit_distance", edit_distance)
@@ -541,13 +552,16 @@ class Seq2SeqModel(LightningModule):
     def test_epoch_end(self, outputs: List[List[Metrics]]) -> None:
         self.evaluation_epoch_end(eval_prefix="test", outputs=outputs)
 
-    def predict_step(self, batch: Batch, batch_idx: int, dataloader_idx: Optional[int] = 0) -> List[InferenceOutput]:
+    def predict_step(
+        self, batch: Batch, batch_idx: int, dataloader_idx: Optional[int] = 0
+    ) -> List[InferenceOutput]:
         return self.greedy_decode(
-            source=batch.source,
-            source_length=batch.source_length.cpu()
+            source=batch.source, source_length=batch.source_length.cpu()
         )
 
-    def greedy_decode(self, source: Tensor, source_length: Tensor) -> List[InferenceOutput]:
+    def greedy_decode(
+        self, source: Tensor, source_length: Tensor
+    ) -> List[InferenceOutput]:
         # Define constants
         batch_size = source.shape[0]
         source_timesteps = source.shape[1]
@@ -632,24 +646,26 @@ class Seq2SeqModel(LightningModule):
         source_length = source_length.detach().cpu().tolist()
         attention_scores = torch.cat(attention_scores, dim=2)
         source = source.detach().cpu()
-        
+
         outputs = []
-        
+
         for k in range(batch_size):
             prediction_length_k = prediction_length[k]
             prediction_k = prediction[k, :prediction_length_k].tolist()
-            source_k = source[k, :source_length[k]]
-            attention_scores_k = attention_scores[k, :source_length[k], : prediction_length_k]
+            source_k = source[k, : source_length[k]]
+            attention_scores_k = attention_scores[
+                k, : source_length[k], :prediction_length_k
+            ]
             attention_scores_k = attention_scores_k.cpu()
-            
+
             additional_information_k = AdditionalInferenceInformation(
                 attention_scores=attention_scores_k
             )
             output_k = InferenceOutput(
                 source=source_k,
                 prediction=prediction_k,
-                additional_information=additional_information_k
+                additional_information=additional_information_k,
             )
             outputs.append(output_k)
-        
+
         return outputs

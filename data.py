@@ -19,7 +19,7 @@ Sequence = List[str]
 SequencePair = Tuple[Sequence, Sequence]
 Dataset = List[SequencePair]
 
-kanji_regex = regex.compile(r'\p{IsHan}', regex.UNICODE)
+kanji_regex = regex.compile(r"\p{IsHan}", regex.UNICODE)
 
 
 def dekanjify(source: Sequence) -> Sequence:
@@ -34,8 +34,13 @@ def dekanjify(source: Sequence) -> Sequence:
     return dekanjified_source
 
 
-def _batch_collate(batch, source_tokenizer: Vocab, target_tokenizer: Vocab, sos_token: str = "[SOS]",
-                   eos_token: str = "[EOS]") -> Batch:
+def _batch_collate(
+    batch,
+    source_tokenizer: Vocab,
+    target_tokenizer: Vocab,
+    sos_token: str = "[SOS]",
+    eos_token: str = "[EOS]",
+) -> Batch:
     sources, targets = zip(*batch)
 
     # Encode sources
@@ -53,22 +58,29 @@ def _batch_collate(batch, source_tokenizer: Vocab, target_tokenizer: Vocab, sos_
     target_tensor = [torch.tensor(target).long() for target in targets]
     target_tensor = pad_sequence(target_tensor, batch_first=True, padding_value=0)
     target_length = torch.tensor([len(target) for target in targets]).long()
-    
+
     return Batch(
         source=source_tensor,
         target=target_tensor,
         source_length=source_length,
-        target_length=target_length
+        target_length=target_length,
     )
 
 
 class Seq2SeqDataModule(LightningDataModule):
     special_tokens = ["[PAD]", "[UNK]", "[SOS]", "[EOS]"]
 
-    def __init__(self, from_files: bool = True, train_path: Optional[str] = None, dev_path: Optional[str] = None,
-                 test_path: Optional[str] = None, train_data: Optional[Dataset] = None,
-                 dev_data: Optional[Dataset] = None, test_data: Optional[Dataset] = None,
-                 batch_size: int = 32):
+    def __init__(
+        self,
+        from_files: bool = True,
+        train_path: Optional[str] = None,
+        dev_path: Optional[str] = None,
+        test_path: Optional[str] = None,
+        train_data: Optional[Dataset] = None,
+        dev_data: Optional[Dataset] = None,
+        test_data: Optional[Dataset] = None,
+        batch_size: int = 32,
+    ):
         super().__init__()
 
         self.from_files = from_files
@@ -105,20 +117,43 @@ class Seq2SeqDataModule(LightningDataModule):
                 for datapoint in dataset:
                     assert isinstance(datapoint, tuple)
                     source, target = datapoint
-                    assert isinstance(source, list) and all(isinstance(symbol, str) for symbol in source)
-                    assert isinstance(target, list) and all(isinstance(symbol, str) for symbol in target)
+                    assert isinstance(source, list) and all(
+                        isinstance(symbol, str) for symbol in source
+                    )
+                    assert isinstance(target, list) and all(
+                        isinstance(symbol, str) for symbol in target
+                    )
 
     @classmethod
-    def from_files(cls, train_path: str, dev_path: str, test_path: Optional[str], batch_size: int = 32):
+    def from_files(
+        cls,
+        train_path: str,
+        dev_path: str,
+        test_path: Optional[str],
+        batch_size: int = 32,
+    ):
         return cls(
-            from_files=True, train_path=train_path, dev_path=dev_path, test_path=test_path, batch_size=batch_size
+            from_files=True,
+            train_path=train_path,
+            dev_path=dev_path,
+            test_path=test_path,
+            batch_size=batch_size,
         )
 
     @classmethod
-    def from_data(cls, train_data: Dataset, dev_data: Dataset = None, test_data: Optional[Dataset] = None,
-                  batch_size: int = 32):
+    def from_data(
+        cls,
+        train_data: Dataset,
+        dev_data: Dataset = None,
+        test_data: Optional[Dataset] = None,
+        batch_size: int = 32,
+    ):
         return cls(
-            from_files=False, train_data=train_data, dev_data=dev_data, test_data=test_data, batch_size=batch_size
+            from_files=False,
+            train_data=train_data,
+            dev_data=dev_data,
+            test_data=test_data,
+            batch_size=batch_size,
         )
 
     def setup(self, stage=None):
@@ -127,23 +162,31 @@ class Seq2SeqDataModule(LightningDataModule):
                 self.train_data = self.load_file(self.train_file_path)
                 self.dev_data = self.load_file(self.dev_file_path)
 
-            self.source_alphabet = list(sorted(set.union(*(set(source) for source, _ in self.train_data))))
-            self.target_alphabet = list(sorted(set.union(*(set(target) for _, target in self.train_data))))
+            self.source_alphabet = list(
+                sorted(set.union(*(set(source) for source, _ in self.train_data)))
+            )
+            self.target_alphabet = list(
+                sorted(set.union(*(set(target) for _, target in self.train_data)))
+            )
 
             self.source_alphabet_size = len(self.source_alphabet) + 4
             self.target_alphabet_size = len(self.target_alphabet) + 4
 
             self.source_tokenizer = build_vocab_from_iterator(
-                [[symbol] for symbol in self.source_alphabet], specials=self.special_tokens
+                [[symbol] for symbol in self.source_alphabet],
+                specials=self.special_tokens,
             )
             self.target_tokenizer = build_vocab_from_iterator(
-                [[symbol] for symbol in self.target_alphabet], specials=self.special_tokens
+                [[symbol] for symbol in self.target_alphabet],
+                specials=self.special_tokens,
             )
             self.source_tokenizer.set_default_index(1)
             self.target_tokenizer.set_default_index(1)
 
             self._batch_collate = partial(
-                _batch_collate, source_tokenizer=self.source_tokenizer, target_tokenizer=self.target_tokenizer
+                _batch_collate,
+                source_tokenizer=self.source_tokenizer,
+                target_tokenizer=self.target_tokenizer,
             )
 
         if stage == "test" or stage is None:
@@ -152,17 +195,29 @@ class Seq2SeqDataModule(LightningDataModule):
 
     def train_dataloader(self, shuffle: bool = True):
         return DataLoader(
-            self.train_data, batch_size=self.batch_size, shuffle=shuffle, collate_fn=self._batch_collate, num_workers=6
+            self.train_data,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            collate_fn=self._batch_collate,
+            num_workers=6,
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.dev_data, batch_size=self.batch_size, shuffle=False, collate_fn=self._batch_collate, num_workers=6
+            self.dev_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=self._batch_collate,
+            num_workers=6,
         )
 
     def test_dataloader(self):
         return DataLoader(
-            self.test_data, batch_size=self.batch_size, shuffle=False, collate_fn=self._batch_collate, num_workers=6
+            self.test_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=self._batch_collate,
+            num_workers=6,
         )
 
     @staticmethod
@@ -174,9 +229,13 @@ class G2PDataModule(Seq2SeqDataModule):
     @staticmethod
     def load_file(path: str):
         with open(path) as df:
-            source_target_pairs = [line.strip().split("\t") for line in df if line.strip()]
+            source_target_pairs = [
+                line.strip().split("\t") for line in df if line.strip()
+            ]
 
-        source_target_pairs = [(list(source), target.split(" ")) for source, target in source_target_pairs]
+        source_target_pairs = [
+            (list(source), target.split(" ")) for source, target in source_target_pairs
+        ]
         return source_target_pairs
 
 

@@ -11,18 +11,23 @@ def load_best_hyperparameters() -> Dict[str, any]:
         return json.load(hf)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser("Inflection Experiment")
     parser.add_argument("--basepath", default="./retrain_results")
     parser.add_argument("--datapath", default="./data")
     parser.add_argument("--language", type=str)
-    parser.add_argument("--model", type=str, choices=["interpretable", "seq2seq"], default="interpretable")
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=["interpretable", "seq2seq"],
+        default="interpretable",
+    )
     parser.add_argument("--trial", type=int, default=1)
     parser.add_argument("--symbol_features", type=int, default=0)
     parser.add_argument("--source_features", type=int, default=0)
     parser.add_argument("--autoregressive_order", type=int, default=0)
     args = parser.parse_args()
-    
+
     best_hyperparameters = load_best_hyperparameters()
     language_parameters = best_hyperparameters[args.language]
 
@@ -31,7 +36,7 @@ if __name__ == '__main__':
         hidden_size=int(language_parameters["hidden_size"]),
         num_layers=int(language_parameters["num_layers"]),
         dropout=language_parameters["dropout"],
-        scheduler_gamma=language_parameters["scheduler_gamma"]
+        scheduler_gamma=language_parameters["scheduler_gamma"],
     )
 
     result = experiment(
@@ -46,5 +51,5 @@ if __name__ == '__main__':
         get_predictions=False,
         verbose=False,
         hyperparameters=hyper_parameters,
-        trial=args.trial
+        trial=args.trial,
     )

@@ -34,7 +34,7 @@ def hyperparameter_tuning(
             num_layers=num_layers,
             hidden_size=hidden_size,
             dropout=dropout,
-            scheduler_gamma=scheduler_gamma
+            scheduler_gamma=scheduler_gamma,
         )
         result = experiment(
             base_path=base_path,

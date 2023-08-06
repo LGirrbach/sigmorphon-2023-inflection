@@ -46,7 +46,7 @@ def _make_experiment_name(
     num_source_features: int,
     autoregressive_order: int,
     hyperparameters: Hyperparameters,
-    trial: int
+    trial: int,
 ) -> str:
     experiment_name = language
     experiment_name = experiment_name + "-" + f"model={model_type}"
@@ -166,7 +166,7 @@ def experiment(
     get_predictions: bool = True,
     verbose: bool = False,
     enforce_cuda: bool = True,
-    trial: int = 0
+    trial: int = 0,
 ):
     # Global Settings
     torch.set_float32_matmul_precision("medium")
@@ -191,7 +191,7 @@ def experiment(
         num_source_features,
         autoregressive_order,
         hyperparameters,
-        trial
+        trial,
     )
     base_path = os.path.join(base_path, experiment_name)
 
@@ -290,7 +290,7 @@ if __name__ == "__main__":
         hidden_size=args.hidden,
         num_layers=args.layers,
         dropout=args.dropout,
-        scheduler_gamma=args.gamma
+        scheduler_gamma=args.gamma,
     )
 
     result = experiment(
@@ -305,7 +305,7 @@ if __name__ == "__main__":
         get_predictions=True,
         verbose=True,
         hyperparameters=hyper_parameters,
-        trial=args.trial
+        trial=args.trial,
     )
 
     print(f"\n\nBest Validation Score:\t {result['best_val_score']:.2f}\n\n")
@@ -320,7 +320,9 @@ if __name__ == "__main__":
         predictions_file_name + "-" + f"num_symbol_features={args.symbol_features}"
     )
     predictions_file_name = (
-        predictions_file_name + "-" + f"autoregressive_order={args.autoregressive_order}"
+        predictions_file_name
+        + "-"
+        + f"autoregressive_order={args.autoregressive_order}"
     )
     predictions_file_name = predictions_file_name + ".pickle"
 

@@ -11,8 +11,8 @@ class Hyperparameters:
     num_layers: int
     dropout: float
     scheduler_gamma: float
-    
-    
+
+
 @dataclass
 class Batch:
     source: Tensor
@@ -37,8 +37,8 @@ class DecoderOutput:
     decoder_states: Tensor
     decoder_state_selection: Tensor
     target_embedded: Tensor
-    
-    
+
+
 @dataclass
 class BridgeOutput:
     output: Tensor
@@ -50,7 +50,7 @@ class AttentionOutput:
     contexts: Tensor
     attention_scores: Tensor
     hard_attention_scores: Tensor
-    
+
 
 @dataclass
 class MaskContainer:
@@ -65,7 +65,7 @@ class AdditionalInferenceInformation:
     sequence_features: Tensor
     symbol_features: Tensor
     decoder_states: Tensor
-    
+
 
 @dataclass
 class InferenceOutput:
